@@ -89,7 +89,7 @@ export default function StudentListTable({ students }) {
                       <div className="flex-shrink-0 h-10 w-10">
                         <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
                           <span className="text-sm font-medium text-blue-800">
-                            {student.name}
+                            {student?.name?.split(' ').map(n => n[0]).join('')}
                           </span>
                         </div>
                       </div>

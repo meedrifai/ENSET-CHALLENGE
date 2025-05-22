@@ -26,7 +26,7 @@ export default function EnseignantLogin() {
             }
 
             localStorage.setItem("enseignantToken", response.token);
-            localStorage.setItem("enseignantData", JSON.stringify(response.enseignant));
+            localStorage.setItem("enseignantData", JSON.stringify(response.teacher));
             
             router.push("/enseignant/dashboard");
         } catch (err) {

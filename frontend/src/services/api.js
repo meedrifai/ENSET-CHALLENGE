@@ -106,7 +106,7 @@ class ApiService {
   // Authentication
   async login(studentId, password) {
     try {
-      const response = await this.request('/auth/login', {
+      const response = await this.request('/auth/student/login', {
         method: 'POST',
         body: JSON.stringify({
           student_id: studentId,
@@ -154,7 +154,7 @@ class ApiService {
 
   async enseignantLogin(email, password) {
     try {
-      const response = await this.request('/auth/enseignant/login', {
+      const response = await this.request('/auth/teacher/login', {
         method: 'POST',
         body: JSON.stringify({
           email: email,

@@ -392,10 +392,12 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
         try {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
-            canvas.width = video.videoWidth / 4;
-            canvas.height = video.videoHeight / 4;
-            
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            if(video && ctx){
+                canvas.width = video?.videoWidth / 4;
+                canvas.height = video?.videoHeight / 4;
+                
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            }
             const currentFrameData = ctx.getImageData(0, 0, canvas.width, canvas.height);
             
             if (previousFrameRef.current) {

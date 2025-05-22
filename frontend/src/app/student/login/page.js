@@ -18,36 +18,26 @@ export default function StudentLogin() {
         setLoading(true);
         setError("");
 
-        // Simulate API call
         try {
-            // Replace with actual API call
-            //api call
             const response = await apiService.login(formData.studentId, formData.password);
-            console.log("Login successful", response);
-
-            if (!response) {
-                throw new Error("Login failed");
+            
+            if (!response || !response.token) {
+                throw new Error("Invalid response from server");
             }
-            // Handle successful login
-            console.log("Login successful", response);
-            // Store token or user data in local storage or context
+
+            // Store token and student data
             localStorage.setItem("studentToken", response.token);
-            // save data on local storage
             localStorage.setItem("studentData", JSON.stringify(response.student));
-            //send student to th test platform if has_completed_quiz false
-            if (!response.student.has_completed_quiz) {
+
+            // Redirect based on test completion status
+            if (!response.student.has_completed_test) {
                 router.push("/student/test");
-                return;
+            } else {
+                router.push("/student/dashboard");
             }
-            // Check if the user has completed the quiz
-            // Redirect to the dashboard if the quiz is completed
-            // if (response.data.has_completed_quiz) {
-
-
-            // Redirect to the next page on successful login
-            router.push("/student/dashboard");
         } catch (err) {
-            setError("Invalid Student ID or Password");
+            console.error("Login error:", err);
+            setError(err.message || "Invalid Student ID or Password");
         } finally {
             setLoading(false);
         }
@@ -59,7 +49,7 @@ export default function StudentLogin() {
                 <h1 className="text-3xl font-bold text-gray-800 text-center mb-6">
                     Student Login
                 </h1>
-                <form onSubmit={handleSubmit} className=" text-black space-y-6">
+                <form onSubmit={handleSubmit} className="text-black space-y-6">
                     <div>
                         <label
                             htmlFor="studentId"
@@ -109,10 +99,10 @@ export default function StudentLogin() {
                         {loading ? (
                             <div className="flex items-center justify-center">
                                 <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent mr-2"></div>
-                                Connexion...
+                                Logging in...
                             </div>
                         ) : (
-                            "🔐 Se connecter"
+                            "🔐 Login"
                         )}
                     </button>
                 </form>
@@ -121,15 +111,15 @@ export default function StudentLogin() {
                     <div className="flex items-center justify-center space-x-4 text-sm text-gray-500">
                         <div className="flex items-center">
                             <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
-                            <span>Connexion sécurisée</span>
+                            <span>Secure Login</span>
                         </div>
                         <div className="flex items-center">
                             <span className="w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
-                            <span>Protection des données</span>
+                            <span>Data Protection</span>
                         </div>
                         <div className="flex items-center">
                             <span className="w-2 h-2 bg-purple-500 rounded-full mr-2"></span>
-                            <span>IA à votre service</span>
+                            <span>AI-Powered</span>
                         </div>
                     </div>
                 </div>

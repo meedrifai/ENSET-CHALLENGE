@@ -23,17 +23,17 @@ export default function StudentTest() {
   const [testStartTime, setTestStartTime] = useState(null);
   const [questionStartTime, setQuestionStartTime] = useState(null);
   const [cognitiveData, setCognitiveData] = useState({
-    responsePatterns: [],
-    hesitationTimes: [],
-    consistencyScores: [],
-    focusMetrics: [],
+    response_patterns: [], // Changed from responsePatterns
+    hesitation_times: [], // Changed from hesitationTimes
+    consistency_scores: [], // Changed from consistencyScores
+    focus_metrics: [], // Changed from focusMetrics
   });
   const [surveillanceMetrics, setSurveillanceMetrics] = useState({
-    faceDetections: 0,
-    positionViolations: 0,
-    speechDetections: 0,
-    multiplePersonsDetected: 0,
-    totalChecks: 0,
+    face_detections: 0, // Changed from faceDetections
+    position_violations: 0, // Changed from positionViolations
+    speech_detections: 0, // Changed from speechDetections
+    multiple_persons_detected: 0, // Changed from multiplePersonsDetected
+    total_checks: 0, // Changed from totalChecks
   });
   const [alertsHistory, setAlertsHistory] = useState([]);
   const [showResults, setShowResults] = useState(false);
@@ -91,7 +91,7 @@ export default function StudentTest() {
 
       if (!response.ok) {
         console.log("Error fetching questions:", response.statusText);
-        throw new Error("Erreur lors du chargement des questions");
+        return; 
       }
 
       const data = await response.json();
@@ -111,10 +111,10 @@ export default function StudentTest() {
 
   const analyzeCognitivePattern = (answer, responseTime, isCorrect) => {
     setCognitiveData((prev) => {
-      const newPatterns = [...prev.responsePatterns, answer];
-      const newHesitationTimes = [...prev.hesitationTimes, responseTime];
+      const newPatterns = [...prev.response_patterns, answer];
+      const newHesitationTimes = [...prev.hesitation_times, responseTime];
 
-      let newConsistencyScores = [...prev.consistencyScores];
+      let newConsistencyScores = [...prev.consistency_scores];
       if (newHesitationTimes.length > 1) {
         const avgTime =
           newHesitationTimes.reduce((a, b) => a + b) /
@@ -126,13 +126,13 @@ export default function StudentTest() {
       const focusScore = isCorrect
         ? Math.max(0, 100 - responseTime / 100)
         : Math.max(0, 50 - responseTime / 200);
-      const newFocusMetrics = [...prev.focusMetrics, focusScore];
+      const newFocusMetrics = [...prev.focus_metrics, focusScore];
 
       return {
-        responsePatterns: newPatterns,
-        hesitationTimes: newHesitationTimes,
-        consistencyScores: newConsistencyScores,
-        focusMetrics: newFocusMetrics,
+        response_patterns: newPatterns,
+        hesitation_times: newHesitationTimes,
+        consistency_scores: newConsistencyScores,
+        focus_metrics: newFocusMetrics,
       };
     });
   };
@@ -145,10 +145,10 @@ export default function StudentTest() {
       selectedAnswer === questions[currentQuestionIndex].correct;
 
     const newAnswer = {
-      questionIndex: currentQuestionIndex,
+      question_index: currentQuestionIndex, // Changed from questionIndex
       answer: selectedAnswer,
-      responseTime,
-      isCorrect,
+      response_time: responseTime, // Changed from responseTime
+      is_correct: isCorrect, // Changed from isCorrect
     };
 
     setAnswers((prev) => [...prev, newAnswer]);
@@ -175,24 +175,36 @@ export default function StudentTest() {
         const isCorrect = selectedAnswer === questions[currentQuestionIndex].correct;
         
         finalAnswers.push({
-          questionIndex: currentQuestionIndex,
+          question_index: currentQuestionIndex,
           answer: selectedAnswer,
-          responseTime,
-          isCorrect,
+          response_time: responseTime,
+          is_correct: isCorrect,
         });
       }
+
+      // Make sure all arrays have at least one element to avoid division by zero
+      const finalCognitiveData = {
+        response_patterns: cognitiveData.response_patterns.length > 0 ? cognitiveData.response_patterns : [0],
+        hesitation_times: cognitiveData.hesitation_times.length > 0 ? cognitiveData.hesitation_times : [1000],
+        consistency_scores: cognitiveData.consistency_scores.length > 0 ? cognitiveData.consistency_scores : [0],
+        focus_metrics: cognitiveData.focus_metrics.length > 0 ? cognitiveData.focus_metrics : [50],
+      };
 
       const submission = {
         student_id: student.id,
         field: student.field,
         answers: finalAnswers,
         total_time: totalTime,
-        cognitive_data: cognitiveData,
+        cognitive_data: finalCognitiveData,
         surveillance_metrics: surveillanceMetrics,
-        alerts_history: alertsHistory,
+        alerts_history: alertsHistory.map(alert => ({
+          message: alert.message,
+          type: alert.type,
+          timestamp: alert.timestamp
+        })),
       };
 
-      console.log("Submission data:", submission); // Debug log
+      console.log("Submission data:", JSON.stringify(submission, null, 2)); // Debug log
 
       const response = await fetch(`http://localhost:8000/test/submit`, {
         method: "POST",
@@ -204,9 +216,9 @@ export default function StudentTest() {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error("Error response:", errorText);
-        throw new Error("Erreur lors de la soumission");
+        const errorData = await response.json();
+        console.error("Error response:", errorData);
+        throw new Error(errorData.detail || "Erreur lors de la soumission");
       }
 
       const results = await response.json();
@@ -243,22 +255,32 @@ export default function StudentTest() {
     setSurveillanceMetrics((prev) => ({
       ...prev,
       ...(alertData.type === "position" && {
-        positionViolations: prev.positionViolations + 1,
+        position_violations: prev.position_violations + 1,
       }),
       ...(alertData.type === "speech" && {
-        speechDetections: prev.speechDetections + 1,
+        speech_detections: prev.speech_detections + 1,
       }),
       ...(alertData.type === "multiple_persons" && {
-        multiplePersonsDetected: prev.multiplePersonsDetected + 1,
+        multiple_persons_detected: prev.multiple_persons_detected + 1,
       }),
-      totalChecks: prev.totalChecks + 1,
+      total_checks: prev.total_checks + 1,
+    }));
+  };
+
+  const handleMetricsUpdate = (metrics) => {
+    setSurveillanceMetrics(prev => ({
+      face_detections: metrics.faceDetections || 0,
+      position_violations: metrics.positionViolations || 0,
+      speech_detections: metrics.speechDetections || 0,
+      multiple_persons_detected: metrics.multiplePersonsDetected || 0,
+      total_checks: metrics.totalChecks || 0,
     }));
   };
 
   const handleLogout = async () => {
     try {
       const token = localStorage.getItem("studentToken");
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/logout`, {
+      await fetch(`http://localhost:8000/auth/logout`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -294,16 +316,6 @@ export default function StudentTest() {
   }
 
   if (showResults) {
-    // Extract values with fallbacks
-    const twinData = testResults?.cognitive_twin || {};
-    const performanceSummary = twinData?.performance_summary || {};
-    const surveillanceSummary = twinData?.surveillance_summary || {};
-    
-    // Debug log to see the actual structure
-    console.log("Twin data structure:", twinData);
-    console.log("Performance summary:", performanceSummary);
-    console.log("Surveillance summary:", surveillanceSummary);
-
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-500 via-purple-600 to-indigo-700 p-4">
         <div className="max-w-4xl mx-auto">
@@ -319,89 +331,56 @@ export default function StudentTest() {
 
             <div className="bg-blue-50 rounded-xl p-6 mb-6">
               <h3 className="text-xl font-bold text-blue-800 mb-4">
-                🧠 Votre Signature Cognitive TWIN
+                🧠 Résultats de votre Test
               </h3>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="bg-white rounded-lg p-4">
                   <div className="flex justify-between items-center mb-2">
-                    <span className="text-gray-600">ID TWIN Unique:</span>
+                    <span className="text-gray-600">ID Preuve:</span>
                     <span className="font-bold text-blue-600">
-                      {twinData.twin_id || testResults?.twin_id || "N/A"}
+                      {testResults?.proof_id || "N/A"}
                     </span>
                   </div>
                   <div className="flex justify-between items-center mb-2">
                     <span className="text-gray-600">Type Cognitif:</span>
                     <span className="font-bold text-green-600">
-                      {twinData.cognitive_type || 
-                       performanceSummary.cognitive_type || 
-                       getNestedValue(testResults, 'cognitive_twin.metrics.cognitive_type', 'N/A')}
+                      {testResults?.results?.cognitive_type || "N/A"}
                     </span>
                   </div>
                   <div className="flex justify-between items-center mb-2">
                     <span className="text-gray-600">Précision:</span>
                     <span className="font-bold text-purple-600">
-                      {performanceSummary.accuracy || testResults?.accuracy || "N/A"}% 
-                      ({performanceSummary.correct_answers || testResults?.correct_answers || "0"}/
-                      {performanceSummary.total_questions || testResults?.total_questions || "0"})
+                      {testResults?.results?.accuracy || "N/A"}%
                     </span>
                   </div>
                 </div>
 
                 <div className="bg-white rounded-lg p-4">
                   <div className="flex justify-between items-center mb-2">
-                    <span className="text-gray-600">Temps moyen/question:</span>
+                    <span className="text-gray-600">Score d'Intégrité:</span>
                     <span className="font-bold text-orange-600">
-                      {performanceSummary.avg_response_time || 
-                       getNestedValue(testResults, 'cognitive_twin.metrics.avg_response_time', 'N/A')}ms
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-gray-600">Niveau de Focus:</span>
-                    <span className="font-bold text-red-600">
-                      {performanceSummary.focus_level || 
-                       getNestedValue(testResults, 'cognitive_twin.metrics.focus_level', 'N/A')}/100
+                      {testResults?.results?.integrity_score || "N/A"}%
                     </span>
                   </div>
                   <div className="flex justify-between items-center mb-2">
                     <span className="text-gray-600">Violations:</span>
+                    <span className="font-bold text-red-600">
+                      {testResults?.results?.violations || "0"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-gray-600">Pattern:</span>
                     <span className="font-bold text-gray-600">
-                      {surveillanceSummary.total_violations || 
-                       testResults?.violations_count || 
-                       "0"}
+                      {testResults?.results?.pattern || "N/A"}
                     </span>
                   </div>
                 </div>
               </div>
 
-              {/* Additional metrics display */}
-              <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-white rounded-lg p-3 text-center">
-                  <div className="text-sm text-gray-600">Score de Consistance</div>
-                  <div className="font-bold text-blue-600">
-                    {performanceSummary.consistency_score || 
-                     getNestedValue(testResults, 'cognitive_twin.metrics.consistency', 'N/A')}
-                  </div>
-                </div>
-                <div className="bg-white rounded-lg p-3 text-center">
-                  <div className="text-sm text-gray-600">Pattern Dominant</div>
-                  <div className="font-bold text-purple-600">
-                    {getNestedValue(testResults, 'cognitive_twin.metrics.dominant_pattern', 'N/A')}
-                  </div>
-                </div>
-                <div className="bg-white rounded-lg p-3 text-center">
-                  <div className="text-sm text-gray-600">Score d'Intégrité</div>
-                  <div className="font-bold text-green-600">
-                    {surveillanceSummary.integrity_score || "N/A"}%
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                <p className="text-sm text-yellow-800">
-                  <strong>📊 Signature stockée:</strong> Votre TWIN cognitif est
-                  maintenant enregistré et peut être utilisé pour de futures
-                  authentifications ou analyses comparatives.
+              <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+                <p className="text-sm text-green-800">
+                  <strong>✅ Test réussi:</strong> {testResults?.message || "Votre signature cognitive a été enregistrée avec succès."}
                 </p>
               </div>
 
@@ -474,7 +453,7 @@ export default function StudentTest() {
             <div className="lg:col-span-1">
               <WebcamSurveillance
                 onAlert={handleSurveillanceAlert}
-                onMetricsUpdate={setSurveillanceMetrics}
+                onMetricsUpdate={handleMetricsUpdate}
               />
             </div>
 
