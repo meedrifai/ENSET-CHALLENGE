@@ -35,6 +35,14 @@ class StudentLogin(BaseModel):
     student_id: str
     password: str
 
+class AdminLogin(BaseModel):
+    email: str
+    password: str
+
+class EnseignantLogin(BaseModel):
+    email: str
+    password: str
+
 class QuestionAnswer(BaseModel):
     question_index: int
     answer: int
@@ -215,6 +223,31 @@ def verify_password(hashed: str, plain: str) -> bool:
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
+@app.get("/students")
+async def get_students():
+    try:
+        students_ref = db.collection('students')
+        docs = students_ref.stream()
+        
+        students = []
+        for doc in docs:
+            student_data = doc.to_dict()
+            student_data['id'] = doc.id
+            students.append(student_data)
+        
+        return {"students": students}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/students")
+async def create_student(student: Dict):
+    try:
+        doc_ref = db.collection('students').document()
+        student['id'] = doc_ref.id
+        doc_ref.set(student)
+        return {"message": "Student created", "student": student}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 # API Endpoints
 @app.get("/")
 async def root():
@@ -715,6 +748,180 @@ async def logout_student(credentials: HTTPAuthorizationCredentials = Depends(sec
     session_ref.delete()
     
     return {"success": True, "message": "Déconnexion réussie"}
+
+@app.post("/auth/admin/login")
+async def login_admin(login_data: AdminLogin):
+    """Authenticate admin and return profile"""
+    try:
+        # Get admin from Firebase
+        admin_ref = db.collection('admins').where('email', '==', login_data.email).limit(1)
+        admin_docs = admin_ref.get()
+        
+        if not admin_docs:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials"
+            )
+        
+        admin_doc = admin_docs[0]
+        admin_data = admin_doc.to_dict()
+        
+        # Verify password
+        if not verify_password(admin_data.get('password'), login_data.password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials"
+            )
+        
+        # Create session token
+        token_data = {
+            'admin_id': admin_doc.id,
+            'role': 'admin',
+            'timestamp': time.time()
+        }
+        token = hashlib.sha256(json.dumps(token_data).encode()).hexdigest()
+        
+        # Store session in Firebase
+        db.collection('sessions').document(token).set({
+            'admin_id': admin_doc.id,
+            'role': 'admin',
+            'created_at': datetime.now(),
+            'expires_at': datetime.now() + timedelta(hours=2)
+        })
+
+        return {
+            "token": token,
+            "admin": {
+                "id": admin_doc.id,
+                "name": admin_data['name'],
+                "email": admin_data['email'],
+                "role": "admin"
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Server error: {str(e)}"
+        )
+
+@app.post("/auth/enseignant/login")
+async def login_enseignant(login_data: EnseignantLogin):
+    """Authenticate teacher and return profile"""
+    try:
+        # Get teacher from Firebase
+        enseignant_ref = db.collection('enseignants').where('email', '==', login_data.email).limit(1)
+        enseignant_docs = enseignant_ref.get()
+        
+        if not enseignant_docs:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials"
+            )
+        
+        enseignant_doc = enseignant_docs[0]
+        enseignant_data = enseignant_doc.to_dict()
+        
+        # Verify password
+        if not verify_password(enseignant_data.get('password'), login_data.password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials"
+            )
+        
+        # Create session token
+        token_data = {
+            'enseignant_id': enseignant_doc.id,
+            'role': 'enseignant',
+            'timestamp': time.time()
+        }
+        token = hashlib.sha256(json.dumps(token_data).encode()).hexdigest()
+        
+        # Store session in Firebase
+        db.collection('sessions').document(token).set({
+            'enseignant_id': enseignant_doc.id,
+            'role': 'enseignant',
+            'created_at': datetime.now(),
+            'expires_at': datetime.now() + timedelta(hours=2)
+        })
+
+        return {
+            "token": token,
+            "enseignant": {
+                "id": enseignant_doc.id,
+                "name": enseignant_data['name'],
+                "email": enseignant_data['email'],
+                "role": "enseignant",
+                "field": enseignant_data.get('field', '')
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Server error: {str(e)}"
+        )
+
+@app.get("/student/{student_id}/signature")
+async def get_student_signature(student_id: str, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Get student's cognitive signature data"""
+    try:
+        # Verify token
+        token = credentials.credentials
+        session_ref = db.collection('sessions').document(token)
+        session_doc = session_ref.get()
+        
+        if not session_doc.exists:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token"
+            )
+        
+        # Get student data
+        student_ref = db.collection('students').document(student_id)
+        student_doc = student_ref.get()
+        
+        if not student_doc.exists:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Student not found"
+            )
+        
+        student_data = student_doc.to_dict()
+        
+        # Get twin data if exists
+        twin_id = student_data.get('twin_id')
+        twin_data = None
+        
+        if twin_id:
+            twin_ref = db.collection('cognitive_twins').document(twin_id)
+            twin_doc = twin_ref.get()
+            if twin_doc.exists:
+                twin_data = twin_doc.to_dict()
+        
+        # Prepare signature data
+        signature_data = {
+            "student_id": student_id,
+            "name": student_data.get('name', ''),
+            "field": student_data.get('field', ''),
+            "last_accuracy": student_data.get('last_accuracy', 0),
+            "last_cognitive_type": student_data.get('last_cognitive_type', 'Not Available'),
+            "has_completed_quiz": student_data.get('has_completed_quiz', False),
+            "last_test_date": student_data.get('last_test_date', None),
+            "twin_data": twin_data
+        }
+        
+        return signature_data
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Server error: {str(e)}"
+        )
 
 if __name__ == "__main__":
     import uvicorn

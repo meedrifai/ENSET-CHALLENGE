@@ -114,10 +114,57 @@ class ApiService {
         }),
       });
       
-      // Sauvegarder le token si la connexion réussit
       if (response.token) {
         try {
           localStorage.setItem('studentToken', response.token);
+        } catch (error) {
+          console.warn('Could not save token to localStorage:', error);
+        }
+      }
+      
+      return response;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async adminLogin(email, password) {
+    try {
+      const response = await this.request('/auth/admin/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: email,
+          password: password,
+        }),
+      });
+      
+      if (response.token) {
+        try {
+          localStorage.setItem('adminToken', response.token);
+        } catch (error) {
+          console.warn('Could not save token to localStorage:', error);
+        }
+      }
+      
+      return response;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async enseignantLogin(email, password) {
+    try {
+      const response = await this.request('/auth/enseignant/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: email,
+          password: password,
+        }),
+      });
+      
+      if (response.token) {
+        try {
+          localStorage.setItem('enseignantToken', response.token);
         } catch (error) {
           console.warn('Could not save token to localStorage:', error);
         }
@@ -174,6 +221,10 @@ class ApiService {
   isAuthenticated() {
     const token = this.getAuthToken();
     return token && token.trim() !== '';
+  }
+
+  async getStudentSignature(studentId) {
+    return this.request(`/student/${studentId}/signature`);
   }
 }
 
