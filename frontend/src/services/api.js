@@ -6,49 +6,144 @@ class ApiService {
     this.baseURL = API_BASE_URL;
   }
 
+  // Méthode pour récupérer le token de manière sécurisée
+  getAuthToken() {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        return localStorage.getItem('studentToken');
+      }
+      return null;
+    } catch (error) {
+      console.warn('Unable to access localStorage:', error);
+      return null;
+    }
+  }
+
+  // Méthode pour supprimer un token invalide
+  clearAuthToken() {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        localStorage.removeItem('studentToken');
+      }
+    } catch (error) {
+      console.warn('Unable to clear localStorage:', error);
+    }
+  }
+
   async request(endpoint, options = {}) {
     const url = `${this.baseURL}${endpoint}`;
-    const token = localStorage.getItem('authToken');
+    const token = this.getAuthToken();
     
     const config = {
       headers: {
         'Content-Type': 'application/json',
-        ...(token && { Authorization: `Bearer ${token}` }),
         ...options.headers,
       },
       ...options,
     };
 
-    try {
-      const response = await fetch(url, config);
-      const data = await response.json();
+    // Ajouter le token seulement s'il existe et n'est pas vide
+    if (token && token.trim() !== '') {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
 
+    try {
+      console.log(`Making request to: ${url}`);
+      const response = await fetch(url, config);
+      
+      // Vérifier si la réponse est OK avant de parser le JSON
       if (!response.ok) {
-        throw new Error(data.detail || `HTTP error! status: ${response.status}`);
+        // Si le token est invalide (401), le supprimer
+        if (response.status === 401) {
+          console.warn('Token expired or invalid, clearing token');
+          this.clearAuthToken();
+        }
+
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.detail || errorData.message || errorMessage;
+        } catch (parseError) {
+          // Si on ne peut pas parser la réponse d'erreur, utiliser le message par défaut
+          console.warn('Could not parse error response:', parseError);
+        }
+        
+        throw new Error(errorMessage);
       }
 
+      const data = await response.json();
+      console.log(`Response from ${endpoint}:`, data);
       return data;
+
     } catch (error) {
       console.error(`API request failed: ${endpoint}`, error);
+      
+      // Si c'est une erreur réseau ou de parsing
+      if (error instanceof TypeError) {
+        throw new Error('Erreur de connexion réseau. Vérifiez votre connexion internet.');
+      }
+      
+      // Gestion spécifique des erreurs de token côté serveur
+      const errorMessage = error.message || '';
+      if (errorMessage.includes('cannot access local variable \'token\'') || 
+          errorMessage.includes('token') || 
+          errorMessage.includes('not associated with a value')) {
+        console.warn('Server-side token error detected, clearing local token');
+        this.clearAuthToken();
+        throw new Error('Erreur d\'authentification côté serveur. Veuillez vous reconnecter.');
+      }
+      
+      // Autres erreurs serveur
+      if (errorMessage.includes('Erreur serveur:')) {
+        throw new Error('Erreur interne du serveur. Veuillez réessayer plus tard.');
+      }
+      
       throw error;
     }
   }
 
   // Authentication
   async login(studentId, password) {
-    return this.request('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({
-        student_id: studentId,
-        password: password,
-      }),
-    });
+    try {
+      const response = await this.request('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          student_id: studentId,
+          password: password,
+        }),
+      });
+      
+      // Sauvegarder le token si la connexion réussit
+      if (response.token) {
+        try {
+          localStorage.setItem('studentToken', response.token);
+        } catch (error) {
+          console.warn('Could not save token to localStorage:', error);
+        }
+      }
+      
+      return response;
+    } catch (error) {
+      throw error;
+    }
   }
 
   async logout() {
-    return this.request('/auth/logout', {
-      method: 'POST',
-    });
+    try {
+      const response = await this.request('/auth/logout', {
+        method: 'POST',
+      });
+      
+      // Toujours supprimer le token local après logout
+      this.clearAuthToken();
+      
+      return response;
+    } catch (error) {
+      // Même en cas d'erreur, supprimer le token local
+      this.clearAuthToken();
+      throw error;
+    }
   }
 
   async getProfile() {
@@ -73,6 +168,12 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify(alertData),
     });
+  }
+
+  // Méthode utilitaire pour vérifier si l'utilisateur est connecté
+  isAuthenticated() {
+    const token = this.getAuthToken();
+    return token && token.trim() !== '';
   }
 }
 

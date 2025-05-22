@@ -1,4 +1,3 @@
-// components/WebcamSurveillance.js
 import { useState, useEffect, useRef } from 'react';
 
 export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
@@ -21,10 +20,13 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
 
     const videoRef = useRef(null);
     const canvasRef = useRef(null);
+    const overlayCanvasRef = useRef(null);
     const audioContextRef = useRef(null);
     const analyserRef = useRef(null);
     const surveillanceIntervalRef = useRef(null);
     const previousFrameRef = useRef(null);
+    const alertsHistoryRef = useRef([]);
+    const faceDetectionModelRef = useRef(false);
 
     useEffect(() => {
         initCamera();
@@ -51,13 +53,14 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
 
         } catch (error) {
             setCameraStatus('⚠️ Caméra/Micro non disponible');
-            console.error('Camera error:', error);
+            console.error('Erreur caméra:', error);
         }
     };
 
     const initSurveillance = async (mediaStream) => {
         try {
-            // Initialize audio analysis
+            // Initialiser l'analyse audio
+            console.log('Initialisation audio...');
             audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
             const source = audioContextRef.current.createMediaStreamSource(mediaStream);
             analyserRef.current = audioContextRef.current.createAnalyser();
@@ -65,11 +68,66 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
             analyserRef.current.smoothingTimeConstant = 0.8;
             source.connect(analyserRef.current);
 
+            console.log('Audio Context State:', audioContextRef.current.state);
+
+            // Setup canvas overlay
+            const video = videoRef.current;
+            const overlayCanvas = overlayCanvasRef.current;
+            
+            if (video && overlayCanvas) {
+                video.addEventListener('loadedmetadata', () => {
+                    overlayCanvas.width = video.videoWidth;
+                    overlayCanvas.height = video.videoHeight;
+                    console.log('Canvas configuré:', overlayCanvas.width, 'x', overlayCanvas.height);
+                });
+            }
+
+            // Essayer de charger Face-API avec gestion d'erreur robuste
+            try {
+                console.log('Tentative de chargement Face-API...');
+                
+                if (typeof window.faceapi === 'undefined') {
+                    // Charger le script face-api dynamiquement
+                    const script = document.createElement('script');
+                    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/face-api.js/0.22.2/face-api.min.js';
+                    document.head.appendChild(script);
+                    
+                    await new Promise((resolve, reject) => {
+                        script.onload = resolve;
+                        script.onerror = reject;
+                        setTimeout(reject, 10000); // timeout après 10s
+                    });
+                }
+
+                if (typeof window.faceapi !== 'undefined') {
+                    const MODEL_URL = 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights';
+                    
+                    await Promise.race([
+                        Promise.all([
+                            window.faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+                            window.faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL)
+                        ]),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000))
+                    ]);
+                    
+                    faceDetectionModelRef.current = true;
+                    console.log('Face-API chargé avec succès');
+                    updateSurveillanceStatus('faceStatus', 'ok', '👤 Détection avancée prête');
+                } else {
+                    throw new Error('Face-API non disponible');
+                }
+                
+            } catch (faceApiError) {
+                console.warn('Face-API non disponible, utilisation détection alternative:', faceApiError);
+                faceDetectionModelRef.current = false;
+                updateSurveillanceStatus('faceStatus', 'warning', '👤 Détection alternative');
+            }
+
             updateSurveillanceStatus('speechStatus', 'ok', '🎤 Analyse audio prête');
-            updateSurveillanceStatus('faceStatus', 'ok', '👤 Détection prête');
+            console.log('Surveillance initialisée');
 
         } catch (error) {
-            console.error('Surveillance initialization error:', error);
+            console.error('Erreur initialisation surveillance:', error);
             updateSurveillanceStatus('faceStatus', 'warning', '👤 Détection basique');
             updateSurveillanceStatus('speechStatus', 'warning', '🎤 Audio basique');
         }
@@ -80,6 +138,7 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
         
         setSurveillanceActive(true);
         surveillanceIntervalRef.current = setInterval(performSurveillanceCheck, 2000);
+        console.log('Surveillance démarrée');
     };
 
     const performSurveillanceCheck = async () => {
@@ -95,26 +154,91 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
             await checkMultiplePersons();
 
         } catch (error) {
-            console.error('Surveillance check error:', error);
+            console.error('Erreur surveillance:', error);
         }
     };
 
     const checkFacePosition = async () => {
         const video = videoRef.current;
-        const canvas = canvasRef.current;
+        const overlayCanvas = overlayCanvasRef.current;
         
-        if (!video || !canvas) return;
+        if (!video || !overlayCanvas) return;
 
         try {
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const ctx = overlayCanvas.getContext('2d');
+            ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
-            // Use alternative detection based on brightness and movement
-            await checkFaceAlternative(video, ctx);
+            if (faceDetectionModelRef.current && typeof window.faceapi !== 'undefined') {
+                await checkFaceWithFaceAPI(video, ctx);
+            } else {
+                await checkFaceAlternative(video, ctx);
+            }
 
         } catch (error) {
-            console.error('Face detection error:', error);
+            console.error('Erreur détection faciale:', error);
             updateSurveillanceStatus('faceStatus', 'warning', '👤 Erreur détection');
+            updateSurveillanceStatus('positionStatus', 'warning', '📍 Erreur position');
+        }
+    };
+
+    const checkFaceWithFaceAPI = async (video, ctx) => {
+        try {
+            const detections = await window.faceapi.detectAllFaces(video, 
+                new window.faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 }));
+            
+            if (detections.length === 0) {
+                updateSurveillanceStatus('faceStatus', 'danger', '👤 Visage non détecté');
+                updateSurveillanceStatus('positionStatus', 'danger', '📍 Hors cadre');
+                showAlert('⚠️ Attention: Votre visage n\'est pas visible. Regardez la caméra!', 'position');
+                
+                setMetrics(prev => ({ ...prev, positionViolations: prev.positionViolations + 1 }));
+                
+            } else if (detections.length === 1) {
+                const detection = detections[0];
+                
+                // Dessiner le rectangle de détection
+                ctx.strokeStyle = '#00ff00';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(detection.box.x, detection.box.y, detection.box.width, detection.box.height);
+                
+                // Vérifier la position
+                const faceCenter = {
+                    x: detection.box.x + detection.box.width / 2,
+                    y: detection.box.y + detection.box.height / 2
+                };
+                
+                const videoCenter = { x: video.videoWidth / 2, y: video.videoHeight / 2 };
+                const distance = Math.sqrt(Math.pow(faceCenter.x - videoCenter.x, 2) + Math.pow(faceCenter.y - videoCenter.y, 2));
+                
+                if (distance > 120) {
+                    updateSurveillanceStatus('faceStatus', 'ok', '👤 Visage détecté');
+                    updateSurveillanceStatus('positionStatus', 'warning', '📍 Position décentrée');
+                    showAlert('⚠️ Repositionnez-vous face à la caméra', 'position');
+                    setMetrics(prev => ({ ...prev, positionViolations: prev.positionViolations + 1 }));
+                } else {
+                    updateSurveillanceStatus('faceStatus', 'ok', '👤 Visage détecté');
+                    updateSurveillanceStatus('positionStatus', 'ok', '📍 Position correcte');
+                }
+                
+                setMetrics(prev => ({ ...prev, faceDetections: prev.faceDetections + 1 }));
+                
+            } else {
+                // Plusieurs visages
+                detections.forEach(detection => {
+                    ctx.strokeStyle = '#ff0000';
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(detection.box.x, detection.box.y, detection.box.width, detection.box.height);
+                });
+                
+                updateSurveillanceStatus('faceStatus', 'danger', `👤 ${detections.length} visages`);
+                updateSurveillanceStatus('positionStatus', 'danger', '📍 Violation');
+                showAlert('🚨 ATTENTION: Plusieurs personnes détectées! Test en cours d\'annulation.', 'multiple_persons');
+                setMetrics(prev => ({ ...prev, multiplePersonsDetected: prev.multiplePersonsDetected + 1 }));
+            }
+            
+        } catch (error) {
+            console.error('Erreur Face-API:', error);
+            await checkFaceAlternative(video, ctx);
         }
     };
 
@@ -169,7 +293,6 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
                 
                 setMetrics(prev => ({ ...prev, faceDetections: prev.faceDetections + 1 }));
 
-                // Draw approximate rectangle
                 ctx.strokeStyle = '#00ff00';
                 ctx.lineWidth = 2;
                 ctx.strokeRect(centerX - faceWidth/2, centerY - faceHeight/2, faceWidth, faceHeight);
@@ -180,13 +303,15 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
             }
 
         } catch (error) {
-            console.error('Alternative face detection error:', error);
+            console.error('Erreur détection alternative:', error);
             updateSurveillanceStatus('faceStatus', 'warning', '👤 Détection limitée');
+            updateSurveillanceStatus('positionStatus', 'warning', '📍 Contrôle manuel');
         }
     };
 
     const checkSpeechActivity = () => {
         if (!analyserRef.current || !audioContextRef.current || audioContextRef.current.state !== 'running') {
+            console.log('Analyser non disponible, état audio:', audioContextRef.current?.state);
             updateSurveillanceStatus('speechStatus', 'warning', '🎤 Audio non initialisé');
             return;
         }
@@ -217,6 +342,8 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
             const speechThreshold = 8;
             const timeDomainThreshold = 10;
 
+            console.log(`Audio - Avg: ${average.toFixed(1)}, Max: ${max}, TimeDomain: ${timeDomainMax}`);
+
             if (average > speechThreshold || max > 25 || timeDomainMax > timeDomainThreshold) {
                 updateSurveillanceStatus('speechStatus', 'danger', '🎤 ACTIVITÉ VOCALE!');
                 showAlert('⚠️ ATTENTION: Activité vocale détectée! Restez silencieux pendant le test.', 'speech');
@@ -228,7 +355,7 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
             }
 
         } catch (error) {
-            console.error('Speech detection error:', error);
+            console.error('Erreur analyse audio:', error);
             updateSurveillanceStatus('speechStatus', 'warning', '🎤 Erreur audio');
         }
     };
@@ -237,9 +364,26 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
         const video = videoRef.current;
         
         try {
-            await checkMultiplePeopleAlternative(video);
+            if (faceDetectionModelRef.current && typeof window.faceapi !== 'undefined') {
+                const detections = await window.faceapi.detectAllFaces(video, 
+                    new window.faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.3 }));
+                
+                if (detections.length > 1) {
+                    updateSurveillanceStatus('peopleStatus', 'danger', `👥 ${detections.length} personnes`);
+                    showAlert('🚨 VIOLATION: Plusieurs personnes détectées! Le test pourrait être annulé.', 'multiple_persons');
+                    setMetrics(prev => ({ ...prev, multiplePersonsDetected: prev.multiplePersonsDetected + 1 }));
+                } else if (detections.length === 1) {
+                    updateSurveillanceStatus('peopleStatus', 'ok', '👥 Seul détecté');
+                } else {
+                    updateSurveillanceStatus('peopleStatus', 'warning', '👥 Aucune personne');
+                }
+                
+            } else {
+                await checkMultiplePeopleAlternative(video);
+            }
+            
         } catch (error) {
-            console.error('Multiple persons detection error:', error);
+            console.error('Erreur détection personnes:', error);
             updateSurveillanceStatus('peopleStatus', 'warning', '👥 Contrôle manuel requis');
         }
     };
@@ -270,7 +414,7 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
             previousFrameRef.current = currentFrameData;
 
         } catch (error) {
-            console.error('Alternative people detection error:', error);
+            console.error('Erreur détection alternative:', error);
             updateSurveillanceStatus('peopleStatus', 'warning', '👥 Détection limitée');
         }
     };
@@ -314,13 +458,22 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
     };
 
     const showAlert = (message, type) => {
+        // Éviter les alertes répétitives
+        const now = Date.now();
+        const recentAlert = alertsHistoryRef.current.find(alert => 
+            alert.message === message && (now - alert.timestamp) < 5000);
+        
+        if (recentAlert) return;
+        
+        alertsHistoryRef.current.push({ message, timestamp: now });
+
         onAlert?.({
             message,
             type,
-            timestamp: Date.now()
+            timestamp: now
         });
 
-        // Visual alert
+        // Alerte visuelle
         const alertDiv = document.createElement('div');
         alertDiv.className = 'fixed top-4 right-4 bg-red-500 text-white px-4 py-3 rounded-lg shadow-lg z-50 animate-pulse';
         alertDiv.textContent = message;
@@ -331,6 +484,9 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
                 alertDiv.parentNode.removeChild(alertDiv);
             }
         }, 4000);
+
+        // Nettoyer l'historique des alertes anciennes
+        alertsHistoryRef.current = alertsHistoryRef.current.filter(alert => (now - alert.timestamp) < 10000);
     };
 
     const cleanup = () => {
@@ -386,11 +542,19 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
                             canvasRef.current.width = videoRef.current.videoWidth;
                             canvasRef.current.height = videoRef.current.videoHeight;
                         }
-                    }
-                    }
+                        if (overlayCanvasRef.current && videoRef.current) {
+                            overlayCanvasRef.current.width = videoRef.current.videoWidth;
+                            overlayCanvasRef.current.height = videoRef.current.videoHeight;
+                        }
+                    }}
+                />
+                <canvas 
+                    ref={overlayCanvasRef} 
+                    className="absolute top-0 left-0 w-full h-full pointer-events-none"
                 />
                 <canvas ref={canvasRef} className="hidden" />
             </div>
+            
             <div className="text-center text-gray-600 text-sm">
                 {cameraStatus}
             </div>
@@ -398,9 +562,8 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
                 {surveillanceActive ? 'Surveillance active' : 'Surveillance inactive'}
             </div>
             <div className="text-center text-gray-600 text-sm mt-2">
-                {`Détections faciales: ${metrics.faceDetections}, Violations de position: ${metrics.positionViolations}, Activité vocale: ${metrics.speechDetections}, Personnes détectées: ${metrics.multiplePersonsDetected}`}
+                Contrôles: {metrics.totalChecks} | Détections faciales: {metrics.faceDetections} | Violations position: {metrics.positionViolations} | Activité vocale: {metrics.speechDetections} | Personnes multiples: {metrics.multiplePersonsDetected}
             </div>
         </div>
     );
 }
-// Note: This code is a simplified version and may not include all the features of the original code.

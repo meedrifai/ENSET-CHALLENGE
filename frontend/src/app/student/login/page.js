@@ -45,7 +45,7 @@ export default function StudentLogin() {
 
 
             // Redirect to the next page on successful login
-            router.push("/student/dashboard");
+            router.push("/dashboard");
         } catch (err) {
             setError("Invalid Student ID or Password");
         } finally {

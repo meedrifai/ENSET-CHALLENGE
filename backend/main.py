@@ -68,10 +68,44 @@ class StudentProfile(BaseModel):
     name: str
     field: str
     email: str
+    
+# Pydantic Models
+class Answer(BaseModel):
+    questionIndex: int
+    answer: int
+    responseTime: int
+    isCorrect: bool
+
+class CognitiveData(BaseModel):
+    responsePatterns: List[int]
+    hesitationTimes: List[int]
+    consistencyScores: List[float]
+    focusMetrics: List[float]
+
+class SurveillanceMetrics(BaseModel):
+    faceDetections: int
+    positionViolations: int
+    speechDetections: int
+    multiplePersonsDetected: int
+    totalChecks: int
+
+class AlertHistory(BaseModel):
+    message: str
+    type: str
+    timestamp: int
+
+class TestSubmission(BaseModel):
+    student_id: str
+    field: str
+    answers: List[Answer]
+    total_time: int
+    cognitive_data: CognitiveData
+    surveillance_metrics: SurveillanceMetrics
+    alerts_history: List[AlertHistory]
 
 # Sample questions data (you can move this to Firebase)
 QUESTIONS_DATA = {
-    "informatique": [
+    "Informatique": [
         {
             "question": "Quel est le principe fondamental de la programmation orientée objet ?",
             "options": ["Encapsulation", "Compilation", "Débogage", "Documentation"],
@@ -197,7 +231,7 @@ async def login_student(login_data: StudentLogin):
         if not student_doc.exists:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Identifiants incorrects" + str(login_data.student_id)
+                detail="Identifiants incorrects"
             )
         
         student_data = student_doc.to_dict()
@@ -209,14 +243,7 @@ async def login_student(login_data: StudentLogin):
                 detail="Identifiants incorrects"
             )
         
-        # Check if already completed
-        if student_data.get('has_completed_quiz', False):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Vous avez déjà passé le test"
-            )
-        
-        # Create session token (simple implementation)
+        # Create session token AVANT de l'utiliser
         token_data = {
             'student_id': login_data.student_id,
             'timestamp': time.time()
@@ -230,16 +257,19 @@ async def login_student(login_data: StudentLogin):
             'expires_at': datetime.now() + timedelta(hours=2)
         })
         
+        # Check if already completed
+        
+        
+        # Retour normal pour les étudiants qui n'ont pas encore complété le quiz
         return {
             "token": token,
             "student": {
                 "id": student_data['id'],
                 "name": student_data['name'],
                 "field": student_data['field'],
-                "email": student_data.get('email', '')
-            },
-          
-            
+                "email": student_data.get('email', ''),
+                "has_completed_quiz" : student_data['has_completed_quiz']
+            }
         }
         
     except HTTPException:
@@ -250,6 +280,34 @@ async def login_student(login_data: StudentLogin):
             detail=f"Erreur serveur: {str(e)}"
         )
 
+@app.get("/student/{student_id}")
+async def get_student(student_id: str):
+    """Récupère les infos de l'étudiant par ID"""
+    try:
+        student_ref = db.collection('students').document(student_id)
+        student_doc = student_ref.get()
+
+        if not student_doc.exists:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Étudiant non trouvé"
+            )
+
+        student_data = student_doc.to_dict()
+        return {
+            "id": student_data.get('id'),
+            "name": student_data.get('name'),
+            "field": student_data.get('field'),
+            "email": student_data.get('email', '')
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur serveur: {str(e)}"
+        )
+        
+        
 @app.get("/questions/{field}")
 async def get_questions(field: str, credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Get questions for specific field"""
@@ -281,12 +339,59 @@ async def get_questions(field: str, credentials: HTTPAuthorizationCredentials = 
     
     return {"questions": QUESTIONS_DATA[field]}
 
+def generate_twin_id(avg_response_time: float, consistency: float, focus: float, accuracy: float, patterns: str) -> str:
+    """Generate unique Twin ID based on cognitive metrics"""
+    combined_data = f"{avg_response_time:.2f}_{consistency:.2f}_{focus:.2f}_{accuracy:.2f}_{patterns}"
+    return hashlib.sha256(combined_data.encode()).hexdigest()[:16].upper()
+
+def determine_cognitive_type(avg_response_time: float, accuracy: float, focus: float) -> str:
+    """Determine cognitive type based on performance metrics"""
+    if accuracy >= 80 and avg_response_time <= 3000 and focus >= 40:
+        return "RAPID_PRECISE"
+    elif accuracy >= 70 and avg_response_time <= 4000:
+        return "BALANCED_PERFORMER"
+    elif accuracy >= 60 and avg_response_time > 4000:
+        return "THOUGHTFUL_ANALYZER"
+    elif avg_response_time <= 2000:
+        return "IMPULSIVE_RESPONDER"
+    elif focus < 30:
+        return "DISTRACTED_LEARNER"
+    else:
+        return "DEVELOPING_LEARNER"
+
+def calculate_cognitive_complexity(cognitive_data: CognitiveData) -> dict:
+    """Calculate advanced cognitive metrics"""
+    # Pattern variability
+    pattern_variance = len(set(cognitive_data.responsePatterns)) / len(cognitive_data.responsePatterns) if cognitive_data.responsePatterns else 0
+    
+    # Response time stability
+    response_times = cognitive_data.hesitationTimes
+    if len(response_times) > 1:
+        avg_time = sum(response_times) / len(response_times)
+        time_variance = sum((t - avg_time) ** 2 for t in response_times) / len(response_times)
+        time_stability = 1 / (1 + (time_variance / avg_time)) if avg_time > 0 else 0
+    else:
+        time_stability = 1.0
+    
+    # Focus progression
+    focus_metrics = cognitive_data.focusMetrics
+    if len(focus_metrics) > 1:
+        focus_trend = (focus_metrics[-1] - focus_metrics[0]) / len(focus_metrics)
+    else:
+        focus_trend = 0
+    
+    return {
+        "pattern_variability": round(pattern_variance, 3),
+        "response_stability": round(time_stability, 3),
+        "focus_progression": round(focus_trend, 3)
+    }
+
 @app.post("/test/submit")
 async def submit_test(
     submission: TestSubmission,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
-    """Submit test results and calculate cognitive signature"""
+    """Submit test results and create cognitive twin profile"""
     # Verify token
     token = credentials.credentials
     session_ref = db.collection('sessions').document(token)
@@ -299,78 +404,254 @@ async def submit_test(
         )
     
     try:
-        # Calculate cognitive metrics
-        correct_answers = sum(1 for answer in submission.answers if answer.is_correct)
-        accuracy = (correct_answers / len(submission.answers)) * 100
+        # Verify student exists
+        student_ref = db.collection('students').document(submission.student_id)
+        student_doc = student_ref.get()
         
-        avg_response_time = sum(answer.response_time for answer in submission.answers) / len(submission.answers)
-        avg_consistency = sum(submission.cognitive_data.consistency_scores) / len(submission.cognitive_data.consistency_scores) if submission.cognitive_data.consistency_scores else 0
-        avg_focus = sum(submission.cognitive_data.focus_metrics) / len(submission.cognitive_data.focus_metrics)
+        if not student_doc.exists:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Étudiant non trouvé"
+            )
+        
+        student_data = student_doc.to_dict()
+        
+        # Calculate basic cognitive metrics
+        correct_answers = sum(1 for answer in submission.answers if answer.isCorrect)
+        total_questions = len(submission.answers)
+        accuracy = (correct_answers / total_questions) * 100 if total_questions > 0 else 0
+        
+        avg_response_time = sum(answer.responseTime for answer in submission.answers) / total_questions if total_questions > 0 else 0
+        
+        # Calculate consistency and focus averages
+        avg_consistency = sum(submission.cognitive_data.consistencyScores) / len(submission.cognitive_data.consistencyScores) if submission.cognitive_data.consistencyScores else 0
+        avg_focus = sum(submission.cognitive_data.focusMetrics) / len(submission.cognitive_data.focusMetrics) if submission.cognitive_data.focusMetrics else 0
         
         # Generate TWIN ID
-        patterns_str = json.dumps(submission.cognitive_data.response_patterns)
+        patterns_str = json.dumps(submission.cognitive_data.responsePatterns)
         twin_id = generate_twin_id(avg_response_time, avg_consistency, avg_focus, accuracy, patterns_str)
         
         # Determine cognitive type
         cognitive_type = determine_cognitive_type(avg_response_time, accuracy, avg_focus)
         
-        # Create cognitive signature
-        cognitive_twin = {
+        # Calculate advanced cognitive complexity
+        cognitive_complexity = calculate_cognitive_complexity(submission.cognitive_data)
+        
+        # Calculate violation severity
+        total_violations = (
+            submission.surveillance_metrics.positionViolations +
+            submission.surveillance_metrics.speechDetections +
+            submission.surveillance_metrics.multiplePersonsDetected
+        )
+        
+        violation_severity = "LOW"
+        if total_violations > 10:
+            violation_severity = "HIGH"
+        elif total_violations > 5:
+            violation_severity = "MEDIUM"
+        
+        # Prepare timestamp
+        current_time = datetime.now()
+        timestamp_iso = current_time.isoformat()
+        
+        # Create Twin record structure
+        twin_data = {
+            # Primary identification
             "twin_id": twin_id,
-            "metrics": {
-                "avg_response_time": round(avg_response_time),
-                "consistency": round(avg_consistency),
-                "focus_level": round(avg_focus),
-                "accuracy": round(accuracy),
-                "dominant_pattern": max(set(submission.cognitive_data.response_patterns), key=submission.cognitive_data.response_patterns.count) if submission.cognitive_data.response_patterns else 0,
+            "student_id": submission.student_id,  # Foreign key reference
+            "student_name": student_data.get('name', ''),
+            "field": submission.field,
+            
+            # Test session info
+            "session_timestamp": timestamp_iso,
+            "total_test_time": submission.total_time,
+            "created_at": current_time,
+            
+            # Performance metrics
+            "performance": {
+                "accuracy_percentage": round(accuracy, 2),
+                "correct_answers": correct_answers,
+                "total_questions": total_questions,
+                "avg_response_time_ms": round(avg_response_time),
                 "cognitive_type": cognitive_type
             },
-            "timestamp": datetime.now().isoformat()
+            
+            # Cognitive profile
+            "cognitive_profile": {
+                "consistency_score": round(avg_consistency, 3),
+                "focus_level": round(avg_focus, 2),
+                "dominant_response_pattern": max(set(submission.cognitive_data.responsePatterns), 
+                                                key=submission.cognitive_data.responsePatterns.count) if submission.cognitive_data.responsePatterns else 0,
+                "pattern_complexity": cognitive_complexity,
+                "learning_style_indicators": {
+                    "rapid_decision_maker": avg_response_time < 2500,
+                    "consistent_performer": avg_consistency > 0.7,
+                    "focused_learner": avg_focus > 35,
+                    "pattern_diverse": cognitive_complexity["pattern_variability"] > 0.6
+                }
+            },
+            
+            # Detailed cognitive data
+            "raw_cognitive_data": {
+                "response_patterns": submission.cognitive_data.responsePatterns,
+                "hesitation_times": submission.cognitive_data.hesitationTimes,
+                "consistency_scores": submission.cognitive_data.consistencyScores,
+                "focus_metrics": submission.cognitive_data.focusMetrics
+            },
+            
+            # Surveillance and integrity
+            "surveillance_report": {
+                "total_checks": submission.surveillance_metrics.totalChecks,
+                "face_detections": submission.surveillance_metrics.faceDetections,
+                "position_violations": submission.surveillance_metrics.positionViolations,
+                "speech_detections": submission.surveillance_metrics.speechDetections,
+                "multiple_persons_detected": submission.surveillance_metrics.multiplePersonsDetected,
+                "total_violations": total_violations,
+                "violation_severity": violation_severity,
+                "integrity_score": max(0, 100 - (total_violations * 5))  # Penalty-based scoring
+            },
+            
+            # Alert history
+            "alerts_summary": {
+                "total_alerts": len(submission.alerts_history),
+                "alert_types": {
+                    "speech": len([a for a in submission.alerts_history if a.type == "speech"]),
+                    "position": len([a for a in submission.alerts_history if a.type == "position"]),
+                    "multiple_persons": len([a for a in submission.alerts_history if a.type == "multiple_persons"])
+                },
+                "first_alert_time": min([a.timestamp for a in submission.alerts_history]) if submission.alerts_history else None,
+                "last_alert_time": max([a.timestamp for a in submission.alerts_history]) if submission.alerts_history else None
+            },
+            
+            # Detailed answers
+            "answers_detail": [
+                {
+                    "question_index": answer.questionIndex,
+                    "selected_answer": answer.answer,
+                    "response_time_ms": answer.responseTime,
+                    "is_correct": answer.isCorrect,
+                    "response_speed_category": "FAST" if answer.responseTime < 2000 else "MEDIUM" if answer.responseTime < 5000 else "SLOW"
+                }
+                for answer in submission.answers
+            ],
+            
+            # Complete alert history
+            "alerts_history": [
+                {
+                    "message": alert.message,
+                    "type": alert.type,
+                    "timestamp": alert.timestamp,
+                    "formatted_time": datetime.fromtimestamp(alert.timestamp / 1000).isoformat()
+                }
+                for alert in submission.alerts_history
+            ]
         }
         
-        # Store results in Firebase
-        result_data = {
-            "student_id": submission.student_id,
-            "field": submission.field,
-            "total_time": submission.total_time,
-            "cognitive_twin": cognitive_twin,
-            "answers": [answer.dict() for answer in submission.answers],
-            "raw_cognitive_data": submission.cognitive_data.dict(),
-            "surveillance_metrics": submission.surveillance_metrics.dict(),
-            "alerts_history": submission.alerts_history,
-            "completed_at": datetime.now(),
-            "violations_count": (
-                submission.surveillance_metrics.position_violations +
-                submission.surveillance_metrics.speech_detections +
-                submission.surveillance_metrics.multiple_persons_detected
-            )
-        }
+        # Save Twin record to Firestore
+        twin_ref = db.collection('cognitive_twins').document(twin_id)
+        twin_ref.set(twin_data)
         
-        # Save to Firebase
-        db.collection('test_results').document(f"{submission.student_id}_{int(time.time())}").set(result_data)
-        
-        # Mark student as completed
-        db.collection('students').document(submission.student_id).update({
+        # Update student record
+        student_ref.update({
             'has_completed_quiz': True,
-            'last_test_date': datetime.now()
+            'last_test_date': current_time,
+            'twin_id': twin_id, 
+            'last_accuracy': accuracy,
+            'last_cognitive_type': cognitive_type
         })
         
-        # Delete session
+        # Create test session record for historical tracking
+        session_data = {
+            "student_id": submission.student_id,
+            "twin_id": twin_id,
+            "field": submission.field,
+            "completed_at": current_time,
+            "accuracy": accuracy,
+            "total_violations": total_violations,
+            "test_duration": submission.total_time
+        }
+        
+        db.collection('test_sessions').document(f"{submission.student_id}_{int(time.time())}").set(session_data)
+        
+        # Clean up session token
         session_ref.delete()
+        
+        # Return comprehensive response
+        return {
+            "success": True,
+            "twin_id": twin_id,
+            "cognitive_twin": {
+                "twin_id": twin_id,
+                "cognitive_type": cognitive_type,
+                "performance_summary": {
+                    "accuracy": round(accuracy, 2),
+                    "correct_answers": correct_answers,
+                    "total_questions": total_questions,
+                    "avg_response_time": round(avg_response_time),
+                    "consistency_score": round(avg_consistency, 3),
+                    "focus_level": round(avg_focus, 2)
+                },
+                "surveillance_summary": {
+                    "total_violations": total_violations,
+                    "violation_severity": violation_severity,
+                    "integrity_score": max(0, 100 - (total_violations * 5))
+                }
+            },
+            "student_profile_updated": True,
+            "test_session_recorded": True
+        }
+        
+    except Exception as e:
+        # Log error for debugging
+        print(f"Error in test submission: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors de la soumission: {str(e)}"
+        )
+
+# Additional endpoint to retrieve twin data
+@app.get("/student/{student_id}/twin")
+async def get_student_twin(student_id: str):
+    """Get cognitive twin data for a student"""
+    try:
+        # Get student's twin ID
+        student_ref = db.collection('students').document(student_id)
+        student_doc = student_ref.get()
+        
+        if not student_doc.exists:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Étudiant non trouvé"
+            )
+        
+        student_data = student_doc.to_dict()
+        twin_id = student_data.get('twin_id')
+        
+        if not twin_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Aucun twin cognitif trouvé pour cet étudiant"
+            )
+        
+        # Get twin data
+        twin_ref = db.collection('cognitive_twins').document(twin_id)
+        twin_doc = twin_ref.get()
+        
+        if not twin_doc.exists:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Données du twin cognitif non trouvées"
+            )
         
         return {
             "success": True,
-            "cognitive_twin": cognitive_twin,
-            "accuracy": accuracy,
-            "correct_answers": correct_answers,
-            "total_questions": len(submission.answers),
-            "violations_count": result_data["violations_count"]
+            "twin_data": twin_doc.to_dict()
         }
         
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erreur lors de la soumission: {str(e)}"
+            detail=f"Erreur lors de la récupération: {str(e)}"
         )
 
 @app.post("/surveillance/alert")
