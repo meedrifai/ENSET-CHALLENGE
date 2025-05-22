@@ -3,6 +3,7 @@ import React from 'react';
 import { FiPlay, FiShield } from 'react-icons/fi';
 import { useState, useEffect} from 'react';
 import {FaBrain} from 'react-icons/fa';
+import Link from 'next/link';
 
 export default function HeroSection() {
   const [currentAnimation, setCurrentAnimation] = useState(0);
@@ -43,10 +44,10 @@ export default function HeroSection() {
             </div>
 
             <div className="flex flex-col sm:flex-row gap-4">
-              <button className="px-8 py-4 bg-gradient-to-r from-blue-600 to-cyan-500 text-white rounded-xl font-semibold hover:shadow-xl hover:scale-105 transition-all duration-300 flex items-center justify-center gap-2">
+              <Link href="/student/login" className="px-8 py-4 bg-gradient-to-r from-blue-600 to-cyan-500 text-white rounded-xl font-semibold hover:shadow-xl hover:scale-105 transition-all duration-300 flex items-center justify-center gap-2">
                 <FaBrain className="w-5 h-5" />
                 Start My Signature
-              </button>
+              </Link>
               
               <button className="px-8 py-4 border-2 border-gray-300 text-gray-700 rounded-xl font-semibold hover:border-blue-500 hover:text-blue-600 transition-all duration-300 flex items-center justify-center gap-2">
                 <FiShield className="w-5 h-5" />
