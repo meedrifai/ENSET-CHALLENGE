@@ -40,7 +40,7 @@ export default function AssignmentList({ assignments, onRefresh }) {
     }
   };
 
-  if (assignments.length === 0) {
+  if (!assignments) {
     return (
       <div className="text-center py-12">
         <div className="text-gray-500 text-lg">Aucun devoir ou examen créé</div>

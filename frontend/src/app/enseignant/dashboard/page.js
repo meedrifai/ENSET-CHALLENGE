@@ -151,7 +151,7 @@ export default function TeacherDashboard() {
 
           <div className="p-6">
             {activeTab === 'assignments' && (
-              <AssignmentList assignments={assignments} onRefresh={fetchAssignments} />
+              <AssignmentList assignments={assignments.assignments} onRefresh={fetchAssignments} />
             )}
             {activeTab === 'create' && teacher && (
               <CreateAssignmentForm

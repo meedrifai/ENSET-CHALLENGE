@@ -1274,59 +1274,74 @@ def get_teacher_by_id(teacher_id: str):
 async def get_teacher_assignments(teacher_id: str):
     """Récupérer tous les examens et quiz d'un professeur"""
     try:
+        # Helper function to normalize datetime objects
+        def normalize_datetime(dt_value):
+            if isinstance(dt_value, str):
+                try:
+                    # Parse ISO format string and make it timezone-aware
+                    parsed_dt = datetime.fromisoformat(dt_value.rstrip('Z'))
+                    if parsed_dt.tzinfo is None:
+                        return parsed_dt.replace(tzinfo=timezone.utc)
+                    return parsed_dt
+                except:
+                    return datetime.min.replace(tzinfo=timezone.utc)
+            elif isinstance(dt_value, datetime):
+                # Make sure datetime is timezone-aware
+                if dt_value.tzinfo is None:
+                    return dt_value.replace(tzinfo=timezone.utc)
+                return dt_value
+            else:
+                # Default fallback
+                return datetime.min.replace(tzinfo=timezone.utc)
+        
         # Get exams
         exams_query = db.collection('exams').where('id_teacher', '==', teacher_id)
         exams_docs = exams_query.stream()
         exams = []
+        
         for doc in exams_docs:
             exam = doc.to_dict()
             exam['type'] = 'exam'
-
+            exam['id'] = doc.id  # Add document ID
+            
+            # Normalize created_at datetime
             created_at = exam.get("created_at")
-            if isinstance(created_at, str):
-                try:
-                    exam["created_at"] = datetime.fromisoformat(created_at)
-                except:
-                    exam["created_at"] = datetime.min
-            elif not isinstance(created_at, datetime):
-                exam["created_at"] = datetime.min
-
+            exam["created_at"] = normalize_datetime(created_at)
             exams.append(exam)
-
+        
         # Get quizzes
         quizzes_query = db.collection('quizzes').where('id_teacher', '==', teacher_id)
         quizzes_docs = quizzes_query.stream()
         quizzes = []
+        
         for doc in quizzes_docs:
             quiz = doc.to_dict()
             quiz['type'] = 'quiz'
-
+            quiz['id'] = doc.id  # Add document ID
+            
+            # Normalize created_at datetime
             created_at = quiz.get("created_at")
-            if isinstance(created_at, str):
-                try:
-                    quiz["created_at"] = datetime.fromisoformat(created_at)
-                except:
-                    quiz["created_at"] = datetime.min
-            elif not isinstance(created_at, datetime):
-                quiz["created_at"] = datetime.min
-
+            quiz["created_at"] = normalize_datetime(created_at)
             quizzes.append(quiz)
-
-        # Combine and sort
+        
+        # Combine and sort assignments
         assignments = exams + quizzes
+        
+        # Sort by created_at (all datetime objects are now timezone-aware)
         assignments.sort(key=lambda x: x["created_at"], reverse=True)
-
-        # Optional: convert datetime back to string for JSON response
+        
+        # Convert datetime objects to ISO format strings for JSON response
         for item in assignments:
             item["created_at"] = item["created_at"].isoformat()
-
+        
         return {
             "teacher_id": teacher_id,
             "assignments": assignments,
             "count": len(assignments)
         }
-
+        
     except Exception as e:
+        print(f"Error in get_teacher_assignments: {str(e)}")  # For debugging
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erreur lors de la récupération des affectations : {str(e)}"
