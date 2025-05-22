@@ -180,11 +180,303 @@ class StudentInfo(BaseModel):
     name: str
     email: str
     field: str
+    
+# Modèles Pydantic
+class FraudDetectionResult(BaseModel):
+    status: str
+    overall_risk: str
+    total_detections: int
+    message: Optional[str] = None
+
+class ExamAttempt(BaseModel):
+    exam_id: str
+    student_id: str
+    answers: Dict[str, Any]
+    fraud_attempts: int = 0
+    status: str  # "in_progress", "completed", "terminated"
 
 # =============================================================================
 # ENDPOINTS POUR EXAMENS
 # =============================================================================
+# 1. Récupérer les quizzes d'un étudiant
+@app.get("/student/{student_id}/quizzes")
+async def get_student_quizzes(student_id: str):
+    """Récupérer tous les quizzes assignés à un étudiant"""
+    try:
+        # Chercher les quizzes où l'étudiant est dans la liste des étudiants
+        quizzes_query = db.collection('quizzes').where('students', 'array_contains', student_id)
+        quizzes_docs = quizzes_query.stream()
+        
+        quizzes = []
+        for doc in quizzes_docs:
+            quiz = doc.to_dict()
+            quiz['id'] = doc.id
+            quizzes.append(quiz)
+        
+        return {
+            "student_id": student_id,
+            "quizzes": quizzes,
+            "count": len(quizzes)
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors de la récupération des quizzes: {str(e)}"
+        )
 
+# 2. Récupérer les examens d'un étudiant
+@app.get("/student/{student_id}/exams")
+async def get_student_exams(student_id: str):
+    """Récupérer tous les examens assignés à un étudiant"""
+    try:
+        exams_query = db.collection('exams').where('students', 'array_contains', student_id)
+        exams_docs = exams_query.stream()
+        
+        exams = []
+        for doc in exams_docs:
+            exam = doc.to_dict()
+            exam['id'] = doc.id
+            exams.append(exam)
+        
+        return {
+            "student_id": student_id,
+            "exams": exams,
+            "count": len(exams)
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors de la récupération des examens: {str(e)}"
+        )
+
+# 3. Récupérer les questions d'un quiz
+@app.get("/quiz/{quiz_id}/questions")
+async def get_quiz_questions(quiz_id: str):
+    """Récupérer toutes les questions d'un quiz"""
+    try:
+        questions_query = db.collection('quiz_questions').where('quiz_id', '==', quiz_id)
+        questions_docs = questions_query.stream()
+        
+        questions = []
+        for doc in questions_docs:
+            question = doc.to_dict()
+            question['id'] = doc.id
+            # Ne pas envoyer la bonne réponse au frontend
+            if 'correct_answer' in question:
+                del question['correct_answer']
+            questions.append(question)
+        
+        # Trier par numéro de question
+        questions.sort(key=lambda x: x.get('question_number', 0))
+        
+        return {
+            "quiz_id": quiz_id,
+            "questions": questions,
+            "count": len(questions)
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors de la récupération des questions: {str(e)}"
+        )
+
+# 4. Récupérer les questions d'un examen
+@app.get("/exam/{exam_id}/questions")
+async def get_exam_questions(exam_id: str):
+    """Récupérer toutes les questions d'un examen"""
+    try:
+        questions_query = db.collection('exam_questions').where('exam_id', '==', exam_id)
+        questions_docs = questions_query.stream()
+        
+        questions = []
+        for doc in questions_docs:
+            question = doc.to_dict()
+            question['id'] = doc.id
+            # Ne pas envoyer la bonne réponse au frontend
+            if 'correct_answer' in question:
+                del question['correct_answer']
+            questions.append(question)
+        
+        questions.sort(key=lambda x: x.get('question_number', 0))
+        
+        return {
+            "exam_id": exam_id,
+            "questions": questions,
+            "count": len(questions)
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors de la récupération des questions: {str(e)}"
+        )
+
+# 5. Soumettre un quiz (pas de surveillance)
+@app.post("/quiz/{quiz_id}/submit")
+async def submit_quiz(quiz_id: str, submission: Dict[str, Any]):
+    """Soumettre les réponses d'un quiz"""
+    try:
+        student_id = submission.get('student_id')
+        answers = submission.get('answers', {})
+        
+        # Créer la soumission
+        submission_doc = {
+            "quiz_id": quiz_id,
+            "student_id": student_id,
+            "answers": answers,
+            "submitted_at": datetime.now(),
+            "status": "completed"
+        }
+        
+        # Sauvegarder la soumission
+        db.collection('quiz_submissions').add(submission_doc)
+        
+        return {
+            "success": True,
+            "message": "Quiz soumis avec succès"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors de la soumission: {str(e)}"
+        )
+
+# 6. Démarrer un examen (avec surveillance)
+@app.post("/exam/{exam_id}/start")
+async def start_exam(exam_id: str, student_data: Dict[str, str]):
+    """Démarrer un examen avec surveillance"""
+    try:
+        student_id = student_data.get('student_id')
+        
+        # Vérifier si l'étudiant a déjà commencé cet examen
+        existing_query = db.collection('exam_attempts').where('exam_id', '==', exam_id).where('student_id', '==', student_id)
+        existing_docs = list(existing_query.stream())
+        
+        if existing_docs:
+            attempt = existing_docs[0].to_dict()
+            if attempt.get('status') == 'terminated':
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Examen terminé pour cause de fraude"
+                )
+            return {
+                "attempt_id": existing_docs[0].id,
+                "status": "resumed"
+            }
+        
+        # Créer une nouvelle tentative
+        attempt_doc = {
+            "exam_id": exam_id,
+            "student_id": student_id,
+            "started_at": datetime.now(),
+            "fraud_attempts": 0,
+            "status": "in_progress",
+            "answers": {}
+        }
+        
+        attempt_ref = db.collection('exam_attempts').add(attempt_doc)
+        
+        return {
+            "attempt_id": attempt_ref[1].id,
+            "status": "started"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors du démarrage: {str(e)}"
+        )
+
+# 7. Signaler une fraude détectée
+@app.post("/exam/fraud-detection")
+async def report_fraud(fraud_data: Dict[str, Any]):
+    """Signaler une détection de fraude"""
+    try:
+        attempt_id = fraud_data.get('attempt_id')
+        detection_result = fraud_data.get('detection_result')
+        
+        # Récupérer la tentative d'examen
+        attempt_ref = db.collection('exam_attempts').document(attempt_id)
+        attempt_doc = attempt_ref.get()
+        
+        if not attempt_doc.exists:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Tentative d'examen non trouvée"
+            )
+        
+        attempt_data = attempt_doc.to_dict()
+        fraud_attempts = attempt_data.get('fraud_attempts', 0) + 1
+        
+        # Mettre à jour le nombre de tentatives de fraude
+        update_data = {
+            "fraud_attempts": fraud_attempts,
+            "last_fraud_detection": datetime.now()
+        }
+        
+        # Si 2 tentatives de fraude, terminer l'examen
+        if fraud_attempts >= 2:
+            update_data["status"] = "terminated"
+            update_data["terminated_at"] = datetime.now()
+            update_data["termination_reason"] = "fraud_detected"
+            
+            # Notifier l'enseignant
+            exam_ref = db.collection('exams').document(attempt_data['exam_id'])
+            exam_doc = exam_ref.get()
+            if exam_doc.exists:
+                exam_data = exam_doc.to_dict()
+                notification_doc = {
+                    "type": "fraud_alert",
+                    "teacher_id": exam_data['id_teacher'],
+                    "student_id": attempt_data['student_id'],
+                    "exam_id": attempt_data['exam_id'],
+                    "message": f"Fraude détectée - Examen terminé pour l'étudiant {attempt_data['student_id']}",
+                    "created_at": datetime.now(),
+                    "read": False
+                }
+                db.collection('notifications').add(notification_doc)
+        
+        attempt_ref.update(update_data)
+        
+        return {
+            "fraud_attempts": fraud_attempts,
+            "status": "terminated" if fraud_attempts >= 2 else "warning",
+            "message": "Examen terminé pour fraude" if fraud_attempts >= 2 else "Avertissement de fraude"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors du signalement: {str(e)}"
+        )
+
+# 8. Soumettre un examen
+@app.post("/exam/{exam_id}/submit")
+async def submit_exam(exam_id: str, submission: Dict[str, Any]):
+    """Soumettre les réponses d'un examen"""
+    try:
+        attempt_id = submission.get('attempt_id')
+        answers = submission.get('answers', {})
+        
+        # Mettre à jour la tentative
+        attempt_ref = db.collection('exam_attempts').document(attempt_id)
+        attempt_ref.update({
+            "answers": answers,
+            "completed_at": datetime.now(),
+            "status": "completed"
+        })
+        
+        return {
+            "success": True,
+            "message": "Examen soumis avec succès"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors de la soumission: {str(e)}"
+        )
+        
 @app.post("/exams")
 async def create_exam(exam_data: ExamCreateComplete):
     """Créer un nouvel examen"""
