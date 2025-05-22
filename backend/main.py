@@ -256,10 +256,7 @@ async def login_student(login_data: StudentLogin):
             'created_at': datetime.now(),
             'expires_at': datetime.now() + timedelta(hours=2)
         })
-        
-        # Check if already completed
-        
-        
+
         # Retour normal pour les étudiants qui n'ont pas encore complété le quiz
         return {
             "token": token,
