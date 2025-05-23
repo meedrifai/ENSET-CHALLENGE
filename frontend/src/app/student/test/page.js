@@ -66,6 +66,48 @@ export default function StudentTest() {
     };
   }, [testStartTime]);
 
+  // Add fullscreen handling
+  useEffect(() => {
+    const enterFullscreen = async () => {
+      try {
+        const element = document.documentElement;
+        if (element.requestFullscreen) {
+          await element.requestFullscreen();
+        } else if (element.webkitRequestFullscreen) {
+          await element.webkitRequestFullscreen();
+        } else if (element.msRequestFullscreen) {
+          await element.msRequestFullscreen();
+        }
+      } catch (error) {
+        console.error('Error entering fullscreen:', error);
+      }
+    };
+
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement && 
+          !document.webkitFullscreenElement && 
+          !document.msFullscreenElement) {
+        // User exited fullscreen
+        router.push('/');
+      }
+    };
+
+    // Enter fullscreen when test starts
+    enterFullscreen();
+
+    // Add fullscreen change event listeners
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('msfullscreenchange', handleFullscreenChange);
+
+    // Cleanup
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('msfullscreenchange', handleFullscreenChange);
+    };
+  }, [router]);
+
   const initializeTest = async () => {
     try {
       const token = localStorage.getItem("studentToken");

@@ -1,19 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
 
-export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
+export default function WebcamSurveillance({ onAlert, onMetricsUpdate, mode = "quiz", onStop, studentId }) {
     const [stream, setStream] = useState(null);
     const [surveillanceActive, setSurveillanceActive] = useState(false);
     const [cameraStatus, setCameraStatus] = useState('📹 Activation de la caméra...');
     const [surveillanceStatus, setSurveillanceStatus] = useState({
         faceStatus: { status: 'warning', text: '👤 Détection faciale...' },
         positionStatus: { status: 'warning', text: '📍 Position...' },
-        speechStatus: { status: 'warning', text: '🎤 Audio...' },
         peopleStatus: { status: 'warning', text: '👥 Présence...' }
     });
     const [metrics, setMetrics] = useState({
         faceDetections: 0,
         positionViolations: 0,
-        speechDetections: 0,
         multiplePersonsDetected: 0,
         totalChecks: 0
     });
@@ -27,6 +25,11 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
     const previousFrameRef = useRef(null);
     const alertsHistoryRef = useRef([]);
     const faceDetectionModelRef = useRef(false);
+    const [fraudAttempts, setFraudAttempts] = useState(0);
+    const [preVideoWarning, setPreVideoWarning] = useState(false);
+    const [showSensibilisation, setShowSensibilisation] = useState(false);
+    const [showExamEndDialog, setShowExamEndDialog] = useState(false);
+    const [isTransitioning, setIsTransitioning] = useState(false);
 
     useEffect(() => {
         initCamera();
@@ -123,13 +126,11 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
                 updateSurveillanceStatus('faceStatus', 'warning', '👤 Détection alternative');
             }
 
-            updateSurveillanceStatus('speechStatus', 'ok', '🎤 Analyse audio prête');
             console.log('Surveillance initialisée');
 
         } catch (error) {
             console.error('Erreur initialisation surveillance:', error);
             updateSurveillanceStatus('faceStatus', 'warning', '👤 Détection basique');
-            updateSurveillanceStatus('speechStatus', 'warning', '🎤 Audio basique');
         }
     };
 
@@ -150,7 +151,6 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
             });
 
             await checkFacePosition();
-            checkSpeechActivity();
             await checkMultiplePersons();
 
         } catch (error) {
@@ -192,6 +192,7 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
                 showAlert('⚠️ Attention: Votre visage n\'est pas visible. Regardez la caméra!', 'position');
                 
                 setMetrics(prev => ({ ...prev, positionViolations: prev.positionViolations + 1 }));
+                await reportFraud('absence_detection', { type: 'visage_non_detecte' });
                 
             } else if (detections.length === 1) {
                 const detection = detections[0];
@@ -215,6 +216,7 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
                     updateSurveillanceStatus('positionStatus', 'warning', '📍 Position décentrée');
                     showAlert('⚠️ Repositionnez-vous face à la caméra', 'position');
                     setMetrics(prev => ({ ...prev, positionViolations: prev.positionViolations + 1 }));
+                    await reportFraud('position_violation', { type: 'position_decentree' });
                 } else {
                     updateSurveillanceStatus('faceStatus', 'ok', '👤 Visage détecté');
                     updateSurveillanceStatus('positionStatus', 'ok', '📍 Position correcte');
@@ -234,8 +236,15 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
                 updateSurveillanceStatus('positionStatus', 'danger', '📍 Violation');
                 showAlert('🚨 ATTENTION: Plusieurs personnes détectées! Test en cours d\'annulation.', 'multiple_persons');
                 setMetrics(prev => ({ ...prev, multiplePersonsDetected: prev.multiplePersonsDetected + 1 }));
+                await reportFraud('multiple_persons', { count: detections.length });
             }
             
+            setFraudAttempts(prev => {
+                const newAttempts = prev + 1;
+                handleFraudAttempt(newAttempts);
+                return newAttempts;
+            });
+
         } catch (error) {
             console.error('Erreur Face-API:', error);
             await checkFaceAlternative(video, ctx);
@@ -248,115 +257,48 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
             const tempCtx = tempCanvas.getContext('2d');
             tempCanvas.width = video.videoWidth;
             tempCanvas.height = video.videoHeight;
-
             tempCtx.drawImage(video, 0, 0);
             const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-
-            const pixels = imageData.data;
-            let totalBrightness = 0;
-            let faceRegionBrightness = 0;
-
+            // Central square fallback: only analyze the central region (not a real face detector)
             const centerX = tempCanvas.width / 2;
             const centerY = tempCanvas.height / 2;
-            const faceWidth = tempCanvas.width * 0.4;
-            const faceHeight = tempCanvas.height * 0.4;
-
-            let facePixels = 0;
-            let totalPixels = 0;
-
-            for (let y = 0; y < tempCanvas.height; y += 4) {
-                for (let x = 0; x < tempCanvas.width; x += 4) {
-                    const index = (y * tempCanvas.width + x) * 4;
-                    const brightness = (pixels[index] + pixels[index + 1] + pixels[index + 2]) / 3;
-                    totalBrightness += brightness;
-                    totalPixels++;
-
-                    if (Math.abs(x - centerX) <= faceWidth/2 && Math.abs(y - centerY) <= faceHeight/2) {
-                        faceRegionBrightness += brightness;
-                        facePixels++;
-                    }
+            const regionW = tempCanvas.width * 0.4;
+            const regionH = tempCanvas.height * 0.4;
+            let regionBrightness = 0;
+            let regionPixels = 0;
+            let minBrightness = 255;
+            let maxBrightness = 0;
+            for (let y = Math.floor(centerY - regionH/2); y < Math.ceil(centerY + regionH/2); y += 4) {
+                for (let x = Math.floor(centerX - regionW/2); x < Math.ceil(centerX + regionW/2); x += 4) {
+                    const idx = (y * tempCanvas.width + x) * 4;
+                    const brightness = (imageData.data[idx] + imageData.data[idx+1] + imageData.data[idx+2]) / 3;
+                    regionBrightness += brightness;
+                    regionPixels++;
+                    if (brightness < minBrightness) minBrightness = brightness;
+                    if (brightness > maxBrightness) maxBrightness = brightness;
                 }
             }
-
-            const avgBrightness = totalBrightness / totalPixels;
-            const avgFaceBrightness = faceRegionBrightness / facePixels;
-            const brightnessDiff = Math.abs(avgFaceBrightness - avgBrightness);
-
-            if (avgBrightness < 30) {
-                updateSurveillanceStatus('faceStatus', 'danger', '👤 Caméra bloquée');
-                updateSurveillanceStatus('positionStatus', 'danger', '📍 Pas de visibilité');
-                showAlert('⚠️ La caméra semble bloquée ou éteinte', 'position');
-                
-            } else if (brightnessDiff > 15) {
-                updateSurveillanceStatus('faceStatus', 'ok', '👤 Présence détectée');
-                updateSurveillanceStatus('positionStatus', 'ok', '📍 Position OK');
-                
-                setMetrics(prev => ({ ...prev, faceDetections: prev.faceDetections + 1 }));
-
-                ctx.strokeStyle = '#00ff00';
-                ctx.lineWidth = 2;
-                ctx.strokeRect(centerX - faceWidth/2, centerY - faceHeight/2, faceWidth, faceHeight);
-                
+            const avgRegionBrightness = regionBrightness / regionPixels;
+            const regionContrast = maxBrightness - minBrightness;
+            // If region is too dark or too uniform, trigger absence
+            if (avgRegionBrightness < 30 || regionContrast < 15) {
+                updateSurveillanceStatus('faceStatus', 'danger', '👤 Absence détectée (zone centrale)');
+                updateSurveillanceStatus('positionStatus', 'danger', '📍 Hors cadre');
+                showAlert('⚠️ Votre présence n\'est plus détectée dans la zone centrale. Restez bien dans le champ de la caméra.', 'position');
+                setFraudAttempts(prev => {
+                    const newAttempts = prev + 1;
+                    handleFraudAttempt(newAttempts);
+                    return newAttempts;
+                });
             } else {
-                updateSurveillanceStatus('faceStatus', 'warning', '👤 Présence incertaine');
-                updateSurveillanceStatus('positionStatus', 'warning', '📍 Position à vérifier');
+                updateSurveillanceStatus('faceStatus', 'ok', '👤 Présence détectée');
+                updateSurveillanceStatus('positionStatus', 'ok', '📍 Position correcte');
+                setMetrics(prev => ({ ...prev, faceDetections: prev.faceDetections + 1 }));
             }
-
         } catch (error) {
             console.error('Erreur détection alternative:', error);
             updateSurveillanceStatus('faceStatus', 'warning', '👤 Détection limitée');
             updateSurveillanceStatus('positionStatus', 'warning', '📍 Contrôle manuel');
-        }
-    };
-
-    const checkSpeechActivity = () => {
-        if (!analyserRef.current || !audioContextRef.current || audioContextRef.current.state !== 'running') {
-            console.log('Analyser non disponible, état audio:', audioContextRef.current?.state);
-            updateSurveillanceStatus('speechStatus', 'warning', '🎤 Audio non initialisé');
-            return;
-        }
-
-        try {
-            const bufferLength = analyserRef.current.frequencyBinCount;
-            const dataArray = new Uint8Array(bufferLength);
-            
-            analyserRef.current.getByteFrequencyData(dataArray);
-            
-            let sum = 0;
-            let max = 0;
-            for (let i = 0; i < bufferLength; i++) {
-                sum += dataArray[i];
-                if (dataArray[i] > max) max = dataArray[i];
-            }
-            const average = sum / bufferLength;
-
-            const timeDomainArray = new Uint8Array(bufferLength);
-            analyserRef.current.getByteTimeDomainData(timeDomainArray);
-            
-            let timeDomainMax = 0;
-            for (let i = 0; i < bufferLength; i++) {
-                const sample = Math.abs(timeDomainArray[i] - 128);
-                if (sample > timeDomainMax) timeDomainMax = sample;
-            }
-
-            const speechThreshold = 8;
-            const timeDomainThreshold = 10;
-
-            console.log(`Audio - Avg: ${average.toFixed(1)}, Max: ${max}, TimeDomain: ${timeDomainMax}`);
-
-            if (average > speechThreshold || max > 25 || timeDomainMax > timeDomainThreshold) {
-                updateSurveillanceStatus('speechStatus', 'danger', '🎤 ACTIVITÉ VOCALE!');
-                showAlert('⚠️ ATTENTION: Activité vocale détectée! Restez silencieux pendant le test.', 'speech');
-                setMetrics(prev => ({ ...prev, speechDetections: prev.speechDetections + 1 }));
-            } else if (average > speechThreshold * 0.5) {
-                updateSurveillanceStatus('speechStatus', 'warning', '🎤 Bruit ambiant');
-            } else {
-                updateSurveillanceStatus('speechStatus', 'ok', '🎤 Silencieux');
-            }
-
-        } catch (error) {
-            console.error('Erreur analyse audio:', error);
-            updateSurveillanceStatus('speechStatus', 'warning', '🎤 Erreur audio');
         }
     };
 
@@ -404,8 +346,14 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
                 const motionZones = analyzeMotionZones(previousFrameRef.current, currentFrameData);
                 
                 if (motionZones.length > 2) {
-                    updateSurveillanceStatus('peopleStatus', 'warning', '👥 Mouvement suspect');
+                    updateSurveillanceStatus('peopleStatus', 'danger', '👥 Mouvement suspect');
                     showAlert('⚠️ Mouvement détecté dans plusieurs zones. Restez seul et immobile.', 'multiple_persons');
+                    await reportFraud('mouvement_suspect', { zones: motionZones.length });
+                    setFraudAttempts(prev => {
+                        const newAttempts = prev + 1;
+                        handleFraudAttempt(newAttempts);
+                        return newAttempts;
+                    });
                 } else if (motionZones.length <= 1) {
                     updateSurveillanceStatus('peopleStatus', 'ok', '👥 Mouvement normal');
                 }
@@ -516,9 +464,82 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
         }
     };
 
+    const handleFraudAttempt = (newAttempts) => {
+        if (newAttempts < 3) {
+            updateSurveillanceStatus('peopleStatus', 'danger', `👥 Absence détectée`);
+            showAlert(`⚠️ Votre présence n'est pas détectée.`, 'multiple_persons');
+        } else if (newAttempts === 3) {
+            setIsTransitioning(true);
+            if (mode === "quiz") {
+                // Pour le quiz : afficher la vidéo puis arrêter
+                setPreVideoWarning(true);
+                setTimeout(() => {
+                    setPreVideoWarning(false);
+                    setShowSensibilisation(true);
+                    setTimeout(() => {
+                        setShowSensibilisation(false);
+                        setIsTransitioning(false);
+                        if (onStop) setTimeout(onStop, 0);
+                    }, 20000);
+                }, 2000);
+            } else if (mode === "exam") {
+                // Pour l'examen : arrêter immédiatement sans vidéo
+                setShowExamEndDialog(true);
+                setTimeout(() => {
+                    setIsTransitioning(false);
+                    if (onStop) setTimeout(onStop, 0);
+                }, 2000);
+            }
+        }
+    };
+
+    const reportFraud = async (fraudType, details) => {
+        try {
+            const fraudData = {
+                date_fraude: new Date().toISOString(),
+                details: details,
+                multiple_persons_detected: metrics.multiplePersonsDetected,
+                position_violations: metrics.positionViolations,
+                speech_detections: 0,
+                id: `fraude_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+                id_ref: studentId,
+                nombre_fraude: 1,
+                ref_type: mode === "quiz" ? "test_cognitif" : "examen",
+                type_fraude: fraudType
+            };
+
+            // Vérifier si studentId est disponible
+            if (!studentId) {
+                console.error('ID étudiant manquant');
+                return;
+            }
+
+            const response = await fetch('/api/fraud/report', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(fraudData)
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.message || 'Erreur lors du signalement de la fraude');
+            }
+
+            console.log('Fraude signalée avec succès:', data);
+        } catch (error) {
+            console.error('Erreur lors du signalement de la fraude:', error);
+            // Ne pas bloquer l'exécution en cas d'erreur
+        }
+    };
+
     return (
         <div className="bg-gray-50 rounded-xl p-4">
-            <h4 className="text-lg font-semibold text-gray-800 mb-4">🔍 Surveillance en Temps Réel</h4>
+            <h4 className="text-lg font-semibold text-gray-800 mb-4">
+                🔍 Surveillance en Temps Réel - {mode === "quiz" ? "Quiz" : "Examen"}
+            </h4>
             
             {/* Surveillance Status */}
             <div className="grid grid-cols-1 gap-2 mb-4">
@@ -563,9 +584,41 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate }) {
             <div className="text-center text-gray-600 text-sm mt-2">
                 {surveillanceActive ? 'Surveillance active' : 'Surveillance inactive'}
             </div>
-            <div className="text-center text-gray-600 text-sm mt-2">
-                Contrôles: {metrics.totalChecks} | Détections faciales: {metrics.faceDetections} | Violations position: {metrics.positionViolations} | Activité vocale: {metrics.speechDetections} | Personnes multiples: {metrics.multiplePersonsDetected}
-            </div>
+
+            {isTransitioning && (
+                <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 animate-fadeIn">
+                    <div className="bg-white rounded-xl p-8 text-center shadow-2xl max-w-xl w-full mx-4 animate-scaleIn">
+                        <h2 className="text-2xl font-bold text-yellow-600 mb-4">⚠️ Attention</h2>
+                        <p className="text-gray-700">Traitement en cours...</p>
+                    </div>
+                </div>
+            )}
+
+            {showSensibilisation && mode === "quiz" && (
+                <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 animate-fadeIn">
+                    <div className="bg-white rounded-xl p-8 text-center shadow-2xl max-w-xl w-full mx-4 animate-scaleIn">
+                        <h2 className="text-2xl font-bold text-yellow-600 mb-4">⚠️ Sensibilisation à la Fraude</h2>
+                        <video
+                            className="w-full max-h-80 rounded mb-4 mx-auto"
+                            controls
+                            autoPlay
+                        >
+                            <source src="/videos/video.mp4" type="video/mp4" />
+                            Votre navigateur ne supporte pas la vidéo.
+                        </video>
+                        <p className="text-gray-700">Votre quiz va être arrêté pour cause de fraude.</p>
+                    </div>
+                </div>
+            )}
+
+            {showExamEndDialog && mode === "exam" && (
+                <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 animate-fadeIn">
+                    <div className="bg-white rounded-xl p-8 text-center shadow-2xl max-w-xl w-full mx-4 animate-scaleIn">
+                        <h2 className="text-2xl font-bold text-red-600 mb-4">⚠️ Examen Terminé</h2>
+                        <p className="text-gray-700">Votre examen est terminé pour cause de fraude. Merci de quitter la salle.</p>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

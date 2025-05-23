@@ -8,6 +8,12 @@ import {
   Play,
   Pause,
 } from "lucide-react";
+import dynamic from "next/dynamic";
+
+const WebcamSurveillance = dynamic(
+  () => import("@/components/WebcamSurveillance"),
+  { ssr: false }
+);
 
 const StudentDashboard = () => {
   const [activeTab, setActiveTab] = useState("quizzes");
@@ -22,11 +28,6 @@ const StudentDashboard = () => {
   const [fraudAttempts, setFraudAttempts] = useState(0);
   const [examTerminated, setExamTerminated] = useState(false);
   const [showWarningVideo, setShowWarningVideo] = useState(false);
-
-  const videoRef = useRef();
-  const canvasRef = useRef();
-  const intervalRef = useRef();
-  const streamRef = useRef();
 
   // Charger les quizzes et examens
   useEffect(() => {
@@ -75,166 +76,6 @@ const StudentDashboard = () => {
     }
   };
 
-  // Démarrer la caméra
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: false,
-      });
-
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-
-      return true;
-    } catch (error) {
-      console.error("Erreur lors de l'accès à la caméra:", error);
-      alert("Veuillez autoriser l'accès à l'écran pour continuer");
-      return false;
-    }
-  };
-
-  const captureScreen = () => {
-    if (!videoRef.current || !canvasRef.current) return null;
-
-    const canvas = canvasRef.current;
-    const context = canvas.getContext("2d");
-
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
-
-    context.drawImage(videoRef.current, 0, 0);
-
-    return canvas.toDataURL("image/jpeg", 0.8); // retourne une DataURL base64
-  };
-
-  // Analyser la fraude
-  const analyzeFraud = async (imageDataUrl) => {
-    try {
-      const imageBlob = dataURLtoBlob(imageDataUrl); // 👈 utilise conversion directe
-
-      const formData = new FormData();
-      formData.append("file", imageBlob, "image.jpeg");
-
-      const response = await fetch("http://localhost:9000/analyze-image", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        console.error("Erreur d'analyse:", error);
-        return null;
-      }
-
-      const result = await response.json();
-      return result;
-    } catch (error) {
-      console.error("Erreur réseau ou serveur :", error);
-      return null;
-    }
-  };
-
-  // Démarrer la surveillance
-  const startMonitoring = () => {
-    setIsMonitoring(true);
-
-    intervalRef.current = setInterval(async () => {
-      const imageData = captureScreen();
-      if (imageData) {
-        const fraudResult = await analyzeFraud(imageData);
-
-        if (fraudResult && fraudResult.overall_risk === "HIGH_RISK") {
-          handleFraudDetection(fraudResult);
-        }
-      }
-    }, 10000); // Toutes les 10 secondes
-  };
-  function dataURLtoBlob(dataURL) {
-  if (!dataURL || !dataURL.startsWith("data:")) {
-    throw new Error("Donnée dataURL invalide ou vide.");
-  }
-
-  const [header, base64] = dataURL.split(",");
-  const match = header.match(/:(.*?);/);
-  if (!match) {
-    throw new Error("Impossible de détecter le type MIME.");
-  }
-
-  const mime = match[1];
-  const binary = atob(base64);
-  const array = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    array[i] = binary.charCodeAt(i);
-  }
-  return new Blob([array], { type: mime });
-}
-
-  // Gérer la détection de fraude
-  const handleFraudDetection = async (fraudResult) => {
-    if (activeQuiz) {
-      // Pour les quizzes: afficher vidéo de sensibilisation
-      setFraudDetected(true);
-      setShowWarningVideo(true);
-    } else if (activeExam) {
-      // Pour les examens: système d'avertissements
-      const newAttempts = fraudAttempts + 1;
-      setFraudAttempts(newAttempts);
-
-      if (newAttempts >= 2) {
-        // Terminer l'examen
-        setExamTerminated(true);
-        await reportFraud(fraudResult, newAttempts);
-        stopMonitoring();
-      } else {
-        // Avertissement
-        setFraudDetected(true);
-        await reportFraud(fraudResult, newAttempts);
-
-        setTimeout(() => {
-          setFraudDetected(false);
-        }, 5000);
-      }
-    }
-  };
-
-  // Signaler la fraude au serveur
-  const reportFraud = async (fraudResult, attempts) => {
-    try {
-      const response = await fetch("http://localhost:9000/analyze-image", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          attempt_id: activeExam?.attemptId,
-          detection_result: fraudResult,
-          fraud_attempts: attempts,
-        }),
-      });
-
-      const result = await response.json();
-      console.log("Fraude signalée:", result);
-    } catch (error) {
-      console.error("Erreur lors du signalement:", error);
-    }
-  };
-
-  // Arrêter la surveillance
-  const stopMonitoring = () => {
-    setIsMonitoring(false);
-
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-    }
-
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-    }
-  };
-
   // Démarrer un quiz
   const startQuiz = async (quiz) => {
     try {
@@ -242,17 +83,12 @@ const StudentDashboard = () => {
         `http://localhost:8000/quiz/${quiz.id}/questions`
       );
       const questionsData = await response.json();
-
-      const cameraStarted = await startCamera();
-      if (!cameraStarted) return;
-
       setActiveQuiz({
         ...quiz,
         questions: questionsData.questions,
       });
       setCurrentQuestion(0);
       setAnswers({});
-      startMonitoring();
     } catch (error) {
       console.error("Erreur lors du démarrage du quiz:", error);
     }
@@ -260,8 +96,15 @@ const StudentDashboard = () => {
 
   // Démarrer un examen
   const startExam = async (exam) => {
+    const savedData = localStorage.getItem("studentData");
+
+    if (!savedData) {
+      console.error("enseignantData not found in localStorage");
+      return;
+    }
+
+    const parsedStudent = JSON.parse(savedData);
     try {
-      // Démarrer l'examen sur le serveur
       const startResponse = await fetch(
         `http://localhost:8000/exam/${exam.id}/start`,
         {
@@ -269,26 +112,18 @@ const StudentDashboard = () => {
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ student_id: student.id }),
+          body: JSON.stringify({ student_id:parsedStudent.id }),
         }
       );
-
       const startResult = await startResponse.json();
-
       if (startResult.status === "terminated") {
         alert("Cet examen a été terminé pour cause de fraude");
         return;
       }
-
-      // Charger les questions
       const questionsResponse = await fetch(
         `http://localhost:8000/exam/${exam.id}/questions`
       );
       const questionsData = await questionsResponse.json();
-
-      const cameraStarted = await startCamera();
-      if (!cameraStarted) return;
-
       setActiveExam({
         ...exam,
         questions: questionsData.questions,
@@ -298,7 +133,6 @@ const StudentDashboard = () => {
       setAnswers({});
       setFraudAttempts(0);
       setExamTerminated(false);
-      startMonitoring();
     } catch (error) {
       console.error("Erreur lors du démarrage de l'examen:", error);
     }
@@ -346,7 +180,6 @@ const StudentDashboard = () => {
       // Nettoyer
       setActiveQuiz(null);
       setActiveExam(null);
-      stopMonitoring();
     } catch (error) {
       console.error("Erreur lors de la soumission:", error);
     }
@@ -370,7 +203,6 @@ const StudentDashboard = () => {
               onClick={() => {
                 setActiveExam(null);
                 setExamTerminated(false);
-                stopMonitoring();
               }}
               className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
             >
@@ -424,125 +256,94 @@ const StudentDashboard = () => {
   const TestInterface = () => {
     const currentTest = activeQuiz || activeExam;
     if (!currentTest) return null;
-
     const question = currentTest.questions[currentQuestion];
-
     return (
       <div className="min-h-screen bg-gray-100 p-4">
-        {/* Caméra cachée */}
-        <video ref={videoRef} autoPlay muted className="hidden" />
-        <canvas ref={canvasRef} className="hidden" />
-
-        {/* Header avec surveillance */}
-        <div className="bg-white rounded-lg shadow-md p-4 mb-6">
-          <div className="flex justify-between items-center">
-            <h1 className="text-xl font-bold">{currentTest.title}</h1>
-            <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2">
-                <Camera
-                  className={`w-5 h-5 ${
-                    isMonitoring ? "text-green-500" : "text-red-500"
-                  }`}
-                />
-                <span
-                  className={`text-sm ${
-                    isMonitoring ? "text-green-600" : "text-red-600"
-                  }`}
-                >
-                  {isMonitoring
-                    ? "Surveillance Active"
-                    : "Surveillance Inactive"}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-1">
+            <WebcamSurveillance
+              mode={activeQuiz ? "quiz" : "exam"}
+              onStop={() => {
+                setActiveQuiz(null);
+                setActiveExam(null);
+                setExamTerminated(true);
+              }}
+            />
+          </div>
+          <div className="lg:col-span-2">
+            <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+              <div className="mb-4">
+                <span className="text-sm text-gray-500">
+                  Question {currentQuestion + 1} sur {currentTest.questions.length}
                 </span>
               </div>
-              {activeExam && (
-                <div className="text-sm text-gray-600">
-                  Avertissements: {fraudAttempts}/2
+              <h2 className="text-lg font-semibold mb-4">{question.question}</h2>
+              {question.type === "multiple_choice" && (
+                <div className="space-y-3">
+                  {question.options.map((option, index) => (
+                    <label
+                      key={index}
+                      className="flex items-center space-x-3 cursor-pointer"
+                    >
+                      <input
+                        type="radio"
+                        name={`question_${currentQuestion}`}
+                        value={option}
+                        checked={answers[currentQuestion] === option}
+                        onChange={(e) =>
+                          setAnswers({
+                            ...answers,
+                            [currentQuestion]: e.target.value,
+                          })
+                        }
+                        className="text-blue-600"
+                      />
+                      <span>{option}</span>
+                    </label>
+                  ))}
                 </div>
+              )}
+              {question.type === "text" && (
+                <textarea
+                  value={answers[currentQuestion] || ""}
+                  onChange={(e) =>
+                    setAnswers({
+                      ...answers,
+                      [currentQuestion]: e.target.value,
+                    })
+                  }
+                  placeholder="Votre réponse..."
+                  className="w-full p-3 border rounded-lg"
+                  rows={4}
+                />
+              )}
+            </div>
+            <div className="flex justify-between">
+              <button
+                onClick={() => setCurrentQuestion(Math.max(0, currentQuestion - 1))}
+                disabled={currentQuestion === 0}
+                className="bg-gray-500 text-white px-4 py-2 rounded disabled:opacity-50"
+              >
+                Précédent
+              </button>
+              {currentQuestion < currentTest.questions.length - 1 ? (
+                <button
+                  onClick={() => setCurrentQuestion(currentQuestion + 1)}
+                  className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+                >
+                  Suivant
+                </button>
+              ) : (
+                <button
+                  onClick={submitAnswers}
+                  className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
+                >
+                  Soumettre
+                </button>
               )}
             </div>
           </div>
         </div>
-
-        {/* Question */}
-        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-          <div className="mb-4">
-            <span className="text-sm text-gray-500">
-              Question {currentQuestion + 1} sur {currentTest.questions.length}
-            </span>
-          </div>
-
-          <h2 className="text-lg font-semibold mb-4">{question.question}</h2>
-
-          {question.type === "multiple_choice" && (
-            <div className="space-y-3">
-              {question.options.map((option, index) => (
-                <label
-                  key={index}
-                  className="flex items-center space-x-3 cursor-pointer"
-                >
-                  <input
-                    type="radio"
-                    name={`question_${currentQuestion}`}
-                    value={option}
-                    checked={answers[currentQuestion] === option}
-                    onChange={(e) =>
-                      setAnswers({
-                        ...answers,
-                        [currentQuestion]: e.target.value,
-                      })
-                    }
-                    className="text-blue-600"
-                  />
-                  <span>{option}</span>
-                </label>
-              ))}
-            </div>
-          )}
-
-          {question.type === "text" && (
-            <textarea
-              value={answers[currentQuestion] || ""}
-              onChange={(e) =>
-                setAnswers({
-                  ...answers,
-                  [currentQuestion]: e.target.value,
-                })
-              }
-              placeholder="Votre réponse..."
-              className="w-full p-3 border rounded-lg"
-              rows={4}
-            />
-          )}
-        </div>
-
-        {/* Navigation */}
-        <div className="flex justify-between">
-          <button
-            onClick={() => setCurrentQuestion(Math.max(0, currentQuestion - 1))}
-            disabled={currentQuestion === 0}
-            className="bg-gray-500 text-white px-4 py-2 rounded disabled:opacity-50"
-          >
-            Précédent
-          </button>
-
-          {currentQuestion < currentTest.questions.length - 1 ? (
-            <button
-              onClick={() => setCurrentQuestion(currentQuestion + 1)}
-              className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-            >
-              Suivant
-            </button>
-          ) : (
-            <button
-              onClick={submitAnswers}
-              className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
-            >
-              Soumettre
-            </button>
-          )}
-        </div>
-
-        {/* Overlay de surveillance */}
         {(fraudDetected || examTerminated) && <MonitoringOverlay />}
       </div>
     );
