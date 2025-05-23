@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import CreateAssignmentForm from '@/components/CreateAssignmentForm';
 import AssignmentList from '@/components/AssignmentList';
 import StudentList from '@/components/StudentList';
+import Navbar from '@/components/NavbarAuth';
 
 export default function TeacherDashboard() {
   const [activeTab, setActiveTab] = useState('assignments');
@@ -101,6 +102,7 @@ export default function TeacherDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      <Navbar location="teacher"/>
       <div className="bg-white shadow">
         <div className="max-w-7xl mx-auto px-4 py-6">
           <h1 className="text-3xl font-bold text-gray-900">EDGUARD - Enseignant</h1>

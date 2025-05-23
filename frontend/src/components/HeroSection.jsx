@@ -49,14 +49,9 @@ export default function HeroSection() {
                 Student Login
               </Link>
               
-              <Link href="/enseignant/login" className="px-8 py-4 bg-gradient-to-r from-purple-600 to-pink-500 text-white rounded-xl font-semibold hover:shadow-xl hover:scale-105 transition-all duration-300 flex items-center justify-center gap-2">
+              <Link href="/admin-teacher-login" className="px-8 py-4 bg-gradient-to-r from-purple-600 to-pink-500 text-white rounded-xl font-semibold hover:shadow-xl hover:scale-105 transition-all duration-300 flex items-center justify-center gap-2">
                 <FaChalkboardTeacher className="w-5 h-5" />
-                Teacher Login
-              </Link>
-
-              <Link href="/admin/login" className="px-8 py-4 border-2 border-gray-300 text-gray-700 rounded-xl font-semibold hover:border-blue-500 hover:text-blue-600 transition-all duration-300 flex items-center justify-center gap-2">
-                <FiShield className="w-5 h-5" />
-                Admin Login
+                Staff Access
               </Link>
             </div>
 

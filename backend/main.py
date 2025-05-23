@@ -199,9 +199,182 @@ class ExamAttempt(BaseModel):
 # ENDPOINTS POUR EXAMENS
 # =============================================================================
 # 1. Récupérer les quizzes d'un étudiant
+
+def get_quiz_status_for_student(quiz_id: str, student_id: str) -> Dict[str, Any]:
+    """Get the status of a quiz for a specific student"""
+    try:
+        # Check in quiz submissions
+        submissions_query = db.collection('quiz_submissions').where('quiz_id', '==', quiz_id).where('student_id', '==', student_id)
+        submissions = list(submissions_query.stream())
+        
+        if submissions:
+            submission = submissions[0].to_dict()
+            return {
+                "status": "completed",
+                "completed_at": submission.get('completed_at'),
+                "score": submission.get('score'),
+                "can_take": False,
+                "message": "Quiz déjà complété"
+            }
+        
+        # Check in quiz attempts
+        attempts_query = db.collection('quiz_attempts').where('quiz_id', '==', quiz_id).where('student_id', '==', student_id)
+        attempts = list(attempts_query.stream())
+        
+        if attempts:
+            attempt = attempts[0].to_dict()
+            if attempt.get('status') == 'terminated':
+                return {
+                    "status": "terminated",
+                    "terminated_at": attempt.get('terminated_at'),
+                    "fraud_attempts": attempt.get('fraud_attempts', 0),
+                    "can_take": False,
+                    "message": "Quiz terminé pour cause de fraude"
+                }
+            elif attempt.get('status') == 'in_progress':
+                return {
+                    "status": "in_progress",
+                    "started_at": attempt.get('started_at'),
+                    "fraud_attempts": attempt.get('fraud_attempts', 0),
+                    "can_take": True,
+                    "message": "Quiz en cours"
+                }
+        
+        return {
+            "status": "available",
+            "can_take": True,
+            "message": "Quiz disponible"
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "can_take": False,
+            "message": f"Erreur lors de la vérification du statut: {str(e)}"
+        }
+
+def get_exam_status_for_student(exam_id: str, student_id: str) -> Dict[str, Any]:
+    """Get the status of an exam for a specific student"""
+    try:
+        # Check in exam submissions
+        submissions_query = db.collection('exam_submissions').where('exam_id', '==', exam_id).where('student_id', '==', student_id)
+        submissions = list(submissions_query.stream())
+        
+        if submissions:
+            submission = submissions[0].to_dict()
+            return {
+                "status": "completed",
+                "completed_at": submission.get('completed_at'),
+                "score": submission.get('score'),
+                "can_take": False,
+                "message": "Examen déjà complété"
+            }
+        
+        # Check in exam attempts
+        attempts_query = db.collection('exam_attempts').where('exam_id', '==', exam_id).where('student_id', '==', student_id)
+        attempts = list(attempts_query.stream())
+        
+        if attempts:
+            attempt = attempts[0].to_dict()
+            if attempt.get('status') == 'terminated':
+                return {
+                    "status": "terminated",
+                    "terminated_at": attempt.get('terminated_at'),
+                    "fraud_attempts": attempt.get('fraud_attempts', 0),
+                    "can_take": False,
+                    "message": "Examen terminé pour cause de fraude"
+                }
+            elif attempt.get('status') == 'in_progress':
+                return {
+                    "status": "in_progress",
+                    "started_at": attempt.get('started_at'),
+                    "fraud_attempts": attempt.get('fraud_attempts', 0),
+                    "can_take": True,
+                    "message": "Examen en cours"
+                }
+        
+        return {
+            "status": "available",
+            "can_take": True,
+            "message": "Examen disponible"
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "can_take": False,
+            "message": f"Erreur lors de la vérification du statut: {str(e)}"
+        }
+
+
+
+def check_exam_time_availability(exam_data: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        now = datetime.now(timezone.utc)
+        start_time = exam_data.get('date_debut_exame')
+        end_time = exam_data.get('date_fin_exame')
+        
+        if isinstance(start_time, str):
+            start_time = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+        if isinstance(end_time, str):
+            end_time = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+        
+        if now < start_time:
+            return {
+                "time_available": False,
+                "message": f"Examen commence le {start_time.strftime('%d/%m/%Y à %H:%M')}"
+            }
+        elif now > end_time:
+            return {
+                "time_available": False,
+                "message": f"Examen terminé le {end_time.strftime('%d/%m/%Y à %H:%M')}"
+            }
+        else:
+            return {
+                "time_available": True,
+                "message": f"Disponible jusqu'au {end_time.strftime('%d/%m/%Y à %H:%M')}"
+            }
+    except Exception as e:
+        return {
+            "time_available": False,
+            "message": f"Erreur de vérification temporelle: {str(e)}"
+        }
+
+def check_quiz_time_availability(quiz_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Check if quiz is within the allowed time window"""
+    try:
+        now = datetime.now(timezone.utc)
+        start_time = quiz_data.get('date_debut_quiz')
+        end_time = quiz_data.get('date_fin_quiz')
+        
+        if isinstance(start_time, str):
+            start_time = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+        if isinstance(end_time, str):
+            end_time = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+        
+        if now < start_time:
+            return {
+                "time_available": False,
+                "message": f"Quiz commence le {start_time.strftime('%d/%m/%Y à %H:%M')}"
+            }
+        elif now > end_time:
+            return {
+                "time_available": False,
+                "message": f"Quiz terminé le {end_time.strftime('%d/%m/%Y à %H:%M')}"
+            }
+        else:
+            return {
+                "time_available": True,
+                "message": f"Disponible jusqu'au {end_time.strftime('%d/%m/%Y à %H:%M')}"
+            }
+    except Exception as e:
+        return {
+            "time_available": False,
+            "message": f"Erreur de vérification temporelle: {str(e)}"
+        }
 @app.get("/student/{student_id}/quizzes")
 async def get_student_quizzes(student_id: str):
-    """Récupérer tous les quizzes assignés à un étudiant"""
+    """Récupérer tous les quizzes assignés à un étudiant avec leur statut"""
     try:
         # Chercher les quizzes où l'étudiant est dans la liste des étudiants
         quizzes_query = db.collection('quizzes').where('students', 'array_contains', student_id)
@@ -211,6 +384,21 @@ async def get_student_quizzes(student_id: str):
         for doc in quizzes_docs:
             quiz = doc.to_dict()
             quiz['id'] = doc.id
+            
+            # Get quiz status for this student
+            quiz_status = get_quiz_status_for_student(doc.id, student_id)
+            quiz.update(quiz_status)
+            
+            # Check time availability
+            time_check = check_quiz_time_availability(quiz)
+            quiz.update(time_check)
+            
+            # Final can_take decision
+            quiz['can_take'] = (
+                quiz_status.get('can_take', False) and 
+                time_check.get('time_available', False)
+            )
+            
             quizzes.append(quiz)
         
         return {
@@ -224,6 +412,220 @@ async def get_student_quizzes(student_id: str):
             detail=f"Erreur lors de la récupération des quizzes: {str(e)}"
         )
 
+@app.get("/student/{student_id}/exams")
+async def get_student_exams(student_id: str):
+    """Récupérer tous les examens assignés à un étudiant avec leur statut"""
+    try:
+        # Chercher les examens où l'étudiant est dans la liste des étudiants
+        exams_query = db.collection('exams').where('students', 'array_contains', student_id)
+        exams_docs = exams_query.stream()
+        
+        exams = []
+        for doc in exams_docs:
+            exam = doc.to_dict()
+            exam['id'] = doc.id
+            
+            # Get exam status for this student
+            exam_status = get_exam_status_for_student(doc.id, student_id)
+            exam.update(exam_status)
+            
+            # Check time availability
+            time_check = check_exam_time_availability(exam)
+            exam.update(time_check)
+            
+            # Final can_take decision
+            exam['can_take'] = (
+                exam_status.get('can_take', False) and 
+                time_check.get('time_available', False)
+            )
+            
+            exams.append(exam)
+        
+        return {
+            "student_id": student_id,
+            "exams": exams,
+            "count": len(exams)
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors de la récupération des examens: {str(e)}"
+        )
+@app.post("/quiz/{quiz_id}/start")
+async def start_quiz(quiz_id: str, student_data: dict):
+    """Démarrer un quiz avec vérification de statut"""
+    try:
+        student_id = student_data.get('student_id')
+        if not student_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="student_id requis"
+            )
+        
+        # Vérifier le statut du quiz
+        quiz_status = get_quiz_status_for_student(quiz_id, student_id)
+        
+        if quiz_status['status'] == 'completed':
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Quiz déjà complété"
+            )
+        elif quiz_status['status'] == 'terminated':
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Quiz terminé pour cause de fraude"
+            )
+        elif quiz_status['status'] == 'in_progress':
+            # Récupérer l'attempt existant
+            attempts_query = db.collection('quiz_attempts').where('quiz_id', '==', quiz_id).where('student_id', '==', student_id)
+            attempts = list(attempts_query.stream())
+            if attempts:
+                attempt = attempts[0].to_dict()
+                return {
+                    "status": "resumed",
+                    "attempt_id": attempts[0].id,
+                    "fraud_attempts": attempt.get('fraud_attempts', 0),
+                    "message": "Quiz repris"
+                }
+        
+        # Créer une nouvelle tentative
+        attempt_data = {
+            "quiz_id": quiz_id,
+            "student_id": student_id,
+            "started_at": datetime.now(timezone.utc),
+            "status": "in_progress",
+            "fraud_attempts": 0,
+            "answers": {}
+        }
+        
+        attempt_ref = db.collection('quiz_attempts').add(attempt_data)
+        
+        return {
+            "status": "started",
+            "attempt_id": attempt_ref[1].id,
+            "fraud_attempts": 0,
+            "message": "Quiz démarré avec succès"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors du démarrage du quiz: {str(e)}"
+        )
+
+@app.post("/exam/{exam_id}/start")
+async def start_exam(exam_id: str, student_data: dict):
+    """Démarrer un examen avec vérification de statut"""
+    try:
+        student_id = student_data.get('student_id')
+        if not student_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="student_id requis"
+            )
+        
+        # Vérifier le statut de l'examen
+        exam_status = get_exam_status_for_student(exam_id, student_id)
+        
+        if exam_status['status'] == 'completed':
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Examen déjà complété"
+            )
+        elif exam_status['status'] == 'terminated':
+            return {
+                "status": "terminated",
+                "message": "Examen terminé pour cause de fraude"
+            }
+        elif exam_status['status'] == 'in_progress':
+            # Récupérer l'attempt existant
+            attempts_query = db.collection('exam_attempts').where('exam_id', '==', exam_id).where('student_id', '==', student_id)
+            attempts = list(attempts_query.stream())
+            if attempts:
+                attempt = attempts[0].to_dict()
+                return {
+                    "status": "resumed",
+                    "attempt_id": attempts[0].id,
+                    "fraud_attempts": attempt.get('fraud_attempts', 0),
+                    "message": "Examen repris"
+                }
+        
+        # Créer une nouvelle tentative
+        attempt_data = {
+            "exam_id": exam_id,
+            "student_id": student_id,
+            "started_at": datetime.now(timezone.utc),
+            "status": "in_progress",
+            "fraud_attempts": 0,
+            "answers": {}
+        }
+        
+        attempt_ref = db.collection('exam_attempts').add(attempt_data)
+        
+        return {
+            "status": "started",
+            "attempt_id": attempt_ref[1].id,
+            "fraud_attempts": 0,
+            "message": "Examen démarré avec succès"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors du démarrage de l'examen: {str(e)}"
+        )
+
+# @app.get("/quiz/{quiz_id}/questions")
+# async def get_quiz_questions(quiz_id: str):
+#     """Récupérer les questions d'un quiz"""
+#     try:
+#         quiz_doc = db.collection('quizzes').document(quiz_id).get()
+#         if not quiz_doc.exists:
+#             raise HTTPException(
+#                 status_code=status.HTTP_404_NOT_FOUND,
+#                 detail="Quiz non trouvé"
+#             )
+        
+#         quiz_data = quiz_doc.to_dict()
+#         return {
+#             "quiz_id": quiz_id,
+#             "questions": quiz_data.get('questions', [])
+#         }
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail=f"Erreur lors de la récupération des questions: {str(e)}"
+#         )
+
+# @app.get("/exam/{exam_id}/questions")
+# async def get_exam_questions(exam_id: str):
+#     """Récupérer les questions d'un examen"""
+#     try:
+#         exam_doc = db.collection('exams').document(exam_id).get()
+#         if not exam_doc.exists:
+#             raise HTTPException(
+#                 status_code=status.HTTP_404_NOT_FOUND,
+#                 detail="Examen non trouvé"
+#             )
+        
+#         exam_data = exam_doc.to_dict()
+#         return {
+#             "exam_id": exam_id,
+#             "questions": exam_data.get('questions', [])
+#         }
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail=f"Erreur lors de la récupération des questions: {str(e)}"
+#         )
 # 2. Récupérer les examens d'un étudiant
 @app.get("/student/{student_id}/exams")
 async def get_student_exams(student_id: str):
@@ -1329,7 +1731,7 @@ async def login_admin(login_data: AdminLogin):
         if not admins_docs:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Identifiants incorrects"
+                detail="Identifiants incorrectss"
             )
         
         admin_doc = admins_docs[0]
@@ -1338,7 +1740,7 @@ async def login_admin(login_data: AdminLogin):
         if not verify_password(admin_data.get('password'), login_data.password):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Identifiants incorrects"
+                detail="Identifiants incorrectsss"
             )
         
         # Create session

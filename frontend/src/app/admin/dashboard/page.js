@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import AdminNavbar from '@/components/AdminNavbar';
 import CreateStudentForm from '@/components/CreateStudentForm';
 import StudentListTable from '@/components/StudentListTable';
+import Navbar from '@/components/NavbarAuth';
 
 const API_BASE_URL = "";
 
@@ -105,6 +106,7 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      <Navbar location="admin"/>
       <AdminNavbar />
       
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">

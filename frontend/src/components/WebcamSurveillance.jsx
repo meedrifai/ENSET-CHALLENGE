@@ -30,6 +30,7 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate, mode = "q
     const [showSensibilisation, setShowSensibilisation] = useState(false);
     const [showExamEndDialog, setShowExamEndDialog] = useState(false);
     const [isTransitioning, setIsTransitioning] = useState(false);
+    const [videoEnded, setVideoEnded] = useState(false);
 
     useEffect(() => {
         initCamera();
@@ -493,47 +494,66 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate, mode = "q
         }
     };
 
-    const reportFraud = async (fraudType, details) => {
-        try {
-            const fraudData = {
-                date_fraude: new Date().toISOString(),
-                details: details,
-                multiple_persons_detected: metrics.multiplePersonsDetected,
-                position_violations: metrics.positionViolations,
-                speech_detections: 0,
-                id: `fraude_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-                id_ref: studentId,
-                nombre_fraude: 1,
-                ref_type: mode === "quiz" ? "test_cognitif" : "examen",
-                type_fraude: fraudType
-            };
-
-            // Vérifier si studentId est disponible
-            if (!studentId) {
-                console.error('ID étudiant manquant');
-                return;
-            }
-
-            const response = await fetch('/api/fraud/report', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(fraudData)
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(data.message || 'Erreur lors du signalement de la fraude');
-            }
-
-            console.log('Fraude signalée avec succès:', data);
-        } catch (error) {
-            console.error('Erreur lors du signalement de la fraude:', error);
-            // Ne pas bloquer l'exécution en cas d'erreur
-        }
+    const handleVideoEnd = () => {
+        setVideoEnded(true);
+        setTimeout(() => {
+            setShowSensibilisation(false);
+            setIsTransitioning(false);
+            if (onStop) setTimeout(onStop, 0);
+        }, 2000);
     };
+
+    const reportFraud = async (fraudType, details) => {
+        const savedData = localStorage.getItem("studentData");
+      
+        if (!savedData) {
+          console.error("studentData not found in localStorage");
+          return;
+        }
+      
+        const parsedStudent = JSON.parse(savedData);
+            try {
+                const fraudData = {
+                    date_fraude: new Date().toISOString(),
+                    details: details,
+                    multiple_persons_detected: metrics.multiplePersonsDetected,
+                    position_violations: metrics.positionViolations,
+                    speech_detections: 0,
+                    id: `fraude_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+                    id_ref: parsedStudent.id,
+                    nombre_fraude: 1,
+                    ref_type: mode === "quiz" ? "test_cognitif" : "examen",
+                    type_fraude: fraudType
+                };
+
+                // Vérifier si studentId est disponible
+                if (
+                    !parsedStudent.id
+                ) {
+                    console.error('ID étudiant manquant');
+                    return;
+                }
+
+                const response = await fetch('/api/fraud/report', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(fraudData)
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.message || 'Erreur lors du signalement de la fraude');
+                }
+
+                console.log('Fraude signalée avec succès:', data);
+            } catch (error) {
+                console.error('Erreur lors du signalement de la fraude:', error);
+                // Ne pas bloquer l'exécution en cas d'erreur
+            }
+        };
 
     return (
         <div className="bg-gray-50 rounded-xl p-4">
@@ -585,37 +605,77 @@ export default function WebcamSurveillance({ onAlert, onMetricsUpdate, mode = "q
                 {surveillanceActive ? 'Surveillance active' : 'Surveillance inactive'}
             </div>
 
-            {isTransitioning && (
-                <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 animate-fadeIn">
-                    <div className="bg-white rounded-xl p-8 text-center shadow-2xl max-w-xl w-full mx-4 animate-scaleIn">
-                        <h2 className="text-2xl font-bold text-yellow-600 mb-4">⚠️ Attention</h2>
-                        <p className="text-gray-700">Traitement en cours...</p>
+            {/* Vidéo de sensibilisation */}
+            {showSensibilisation && (
+                <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-xl p-6 text-center shadow-2xl max-w-2xl w-full mx-4">
+                        <h2 className="text-2xl font-bold text-yellow-600 mb-4">
+                            {mode === "quiz" ? "📚 Sensibilisation à la Fraude" : "🚫 Violation des Règles"}
+                        </h2>
+                        <div className="mb-4">
+                            <video
+                                className="w-full max-h-80 rounded mx-auto bg-black"
+                                controls
+                                autoPlay
+                                onEnded={handleVideoEnd}
+                            >
+                                <source src="/videos/video.mp4" type="video/mp4" />
+                                <p className="text-white p-4">
+                                    Votre navigateur ne supporte pas la vidéo. Veuillez mettre à jour votre navigateur.
+                                </p>
+                            </video>
+                        </div>
+                        <p className="text-gray-700 text-lg">
+                            {videoEnded 
+                                ? 'Vidéo terminée. Fermeture en cours...' 
+                                : mode === "quiz" 
+                                    ? 'Votre quiz sera arrêté à la fin de cette vidéo.'
+                                    : 'Votre examen sera terminé à la fin de cette vidéo.'}
+                        </p>
+                        {!videoEnded && (
+                            <div className="mt-4 bg-yellow-100 p-3 rounded-lg">
+                                <p className="text-sm text-yellow-800">
+                                    Cette vidéo vous sensibilise aux conséquences de la fraude académique.
+                                </p>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
 
-            {showSensibilisation && mode === "quiz" && (
-                <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 animate-fadeIn">
-                    <div className="bg-white rounded-xl p-8 text-center shadow-2xl max-w-xl w-full mx-4 animate-scaleIn">
-                        <h2 className="text-2xl font-bold text-yellow-600 mb-4">⚠️ Sensibilisation à la Fraude</h2>
-                        <video
-                            className="w-full max-h-80 rounded mb-4 mx-auto"
-                            controls
-                            autoPlay
-                        >
-                            <source src="/videos/video.mp4" type="video/mp4" />
-                            Votre navigateur ne supporte pas la vidéo.
-                        </video>
-                        <p className="text-gray-700">Votre quiz va être arrêté pour cause de fraude.</p>
+            {/* Dialog fin d'examen */}
+            {showExamEndDialog && mode === "exam" && !showSensibilisation && (
+                <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-xl p-8 text-center shadow-2xl max-w-xl w-full mx-4">
+                        <h2 className="text-3xl font-bold text-red-600 mb-6">🚫 EXAMEN TERMINÉ</h2>
+                        <div className="mb-6">
+                            <div className="text-6xl mb-4">⚠️</div>
+                            <p className="text-xl text-gray-700 mb-4">
+                                Votre examen est terminé suite à une violation des règles de surveillance.
+                            </p>
+                            <p className="text-lg text-gray-600">
+                                Veuillez quitter la salle d'examen et contacter votre superviseur.
+                            </p>
+                        </div>
+                        <div className="bg-red-100 p-4 rounded-lg">
+                            <p className="text-sm text-red-800">
+                                Tentatives de fraude: {fraudAttempts}/3 - Limite atteinte
+                            </p>
+                        </div>
                     </div>
                 </div>
             )}
 
-            {showExamEndDialog && mode === "exam" && (
-                <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 animate-fadeIn">
-                    <div className="bg-white rounded-xl p-8 text-center shadow-2xl max-w-xl w-full mx-4 animate-scaleIn">
-                        <h2 className="text-2xl font-bold text-red-600 mb-4">⚠️ Examen Terminé</h2>
-                        <p className="text-gray-700">Votre examen est terminé pour cause de fraude. Merci de quitter la salle.</p>
+            {/* Overlay de transition */}
+            {isTransitioning && !preVideoWarning && !showSensibilisation && !showExamEndDialog && (
+                <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-40">
+                    <div className="bg-white rounded-xl p-8 text-center shadow-2xl max-w-xl w-full mx-4">
+                        <h2 className="text-2xl font-bold text-blue-600 mb-4">⏳ Traitement en cours</h2>
+                        <div className="flex items-center justify-center space-x-2 mb-4">
+                            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
+                            <span className="text-gray-600">Analyse des violations...</span>
+                        </div>
+                        <p className="text-sm text-gray-500">Veuillez patienter</p>
                     </div>
                 </div>
             )}
